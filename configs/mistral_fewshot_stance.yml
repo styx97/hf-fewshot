@@ -1,0 +1,29 @@
+# FILEPATH: /fs/clip-political/rupak/hf-fewshot/configs/config_mistral_fewshot.yaml
+
+# Main header
+exemplars:
+    path: /fs/clip-political/rupak/hf-fewshot/exemplars/exemplar_path
+    num_exemplars: 5
+    shuffle_exemplars: False 
+
+prompts: 
+    #path: /fs/clip-political/rupak/hf-fewshot/prompts/
+    prompt_name: stance_detection
+    output_var: stance
+    labels: [favor, against, neutral]
+    input_vars: [text, topic]
+    
+model_details:
+    model_name: mistralai/Mistral-7B-Instruct-v0.2
+    model_class: MistralFewShot
+    batch_size: 16
+    
+# The dataset should be a jsonlines file with keys that are of the following type 
+dataset_details:
+    id_key: decomp_id
+
+output_details:
+    dataset_name: fda-decomps
+    output_folder: /fs/clip-political/rupak/hf-fewshot/outputs
+    task_name: fewshot-stance
+    
