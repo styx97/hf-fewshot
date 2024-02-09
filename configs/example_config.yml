@@ -16,6 +16,7 @@ prompts:
 model_details:
     model_name: mistralai/Mistral-7B-Instruct-v0.2
     model_family: mistral
+    scores: False
     batch_size: 16
     max_new_tokens: 256
     temperature: 0.01
