@@ -49,18 +49,15 @@ class MistralFewShot:
         self.max_new_tokens = model_details.get("max_new_tokens", 10)
         self.temperature = model_details.get("temperature", 0.01)
 
-        if labels:
-            self.set_labels(labels)
-
-    def set_labels(self, labels: list[str]): 
-        self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
-        print("Label ID Map: ", self.label_id_map)
+        if labels and model_details["scores"]:
+            self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
+            print("Label ID Map: ", self.label_id_map)
+            
 
     def debug(self): 
         while True: 
             query_text = input("Enter prompt string: ")
             print(self.generate_answer(query_text))
-
 
 
     def generate_answer(self, question_text: str):
@@ -92,10 +89,7 @@ class MistralFewShot:
         Can be generalized to other types of query processing.
         TODO: Get FlashAttention2 to work with this.
         """
-
-        if not hasattr(self, "prompt"): 
-            raise ValueError("Prompt not set. Use set_prompt() to set prompt.")
-
+        
         messages = [
             self.tokenizer.apply_chat_template(messages,
                                                 tokenize=False) 
@@ -108,7 +102,7 @@ class MistralFewShot:
 
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = self.temperature,
+            max_new_tokens = self.max_new_tokens,
             do_sample=True,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,

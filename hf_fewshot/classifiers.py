@@ -46,34 +46,40 @@ def few_shot_classifier(config_file: str):
     assert set(input_vars).issubset(all_dataset_vars), (f"Variables in the prompt: {input_vars} are not "
                                                     f"found in the dataset: {all_dataset_vars}")
 
-    model = model_map[model_family](model_name=model_name,
-                                labels=labels, 
-                                model_details=config["model_details"])
-    
     query_texts = [prep_prompt(targets,
                                 output_var,
                                 prompt=prompt,
                                 exemplars=exemplars) 
                                         for targets in dataset]
-    
 
+
+    model_details = config["model_details"]
+    model = model_map[model_family](model_name=model_name,
+                                labels=labels, 
+                                model_details=model_details)
+    
+    
     print(f"Generated {len(query_texts)} input prompts for {model_name}")
     pbar = tqdm(total=len(query_texts), desc="Generating responses")
     
     with open(outfile, 'w') as f:
-        print("Writing responses to ", config["outfile"])
+        print("Writing responses to ", outfile)
         for i in range(0, len(query_texts), batch_size):
             pbar.update(batch_size)
             batch_query_texts = query_texts[i:i+batch_size]
             ids = all_id_values[i:i+batch_size]
-            batch_responses, scores = model.generate_answer_batch_scores(batch_query_texts)
-            assert len(batch_responses) == len(scores), "Batch size mismatch"
-            
-            for id_, response, score in zip(ids, batch_responses, scores):
-                f.write(json.dumps({id_key: id_, "response": response, "scores": score}))
-                f.write('\n')
+
+            if model_details["scores"]: 
+                batch_responses, scores = model.generate_answer_batch_scores(batch_query_texts)
+                assert len(batch_responses) == len(scores), "Batch size mismatch"
+                for id_, response, score in zip(ids, batch_responses, scores):
+                    f.write(json.dumps({id_key: id_, "response": response, "scores": score}))
+                    f.write('\n')
+
+            else:
+                batch_responses = model.generate_answer_batch(batch_query_texts)
+                for id_, response in zip(ids, batch_responses):
+                    f.write(json.dumps({id_key: id_, "response": response}))
+                    f.write('\n')
     
     pbar.close()
-
-
-few_shot_classifier("/fs/clip-political/rupak/opinion_multivalence/configs/mistral_fewshot_stance.yml")

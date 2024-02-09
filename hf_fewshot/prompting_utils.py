@@ -33,6 +33,7 @@ def prep_prompt(
         prompt: dict,
         exemplars: list[dict]=None) -> list:
     
+    
     """
     Takes a prompt, an exemplar path that is a jsonlines file, 
     and targets that contain the data to run predictions on. 
@@ -77,6 +78,7 @@ def prep_prompt(
         "content": followup_prompts.format(**targets)
     })
     
+    return messages
 
 def prep_prompt_old(target_document: str, 
                          topic: str,
