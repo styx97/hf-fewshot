@@ -35,16 +35,20 @@ def get_label_logprobs(scores, label_id_map):
     assert len(batch_logprobs) == batch_size, "Batch size mismatch"
     return batch_logprobs
 
-
 class MistralFewShot:
     def __init__(self, 
                 model_name: str, 
-                labels: list[str]=None):
+                labels: list[str]=None, 
+                model_details: dict=None):
         
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(model_name, 
                                                          torch_dtype=torch.bfloat16,
                                                          device_map="auto")
+        
+        self.max_new_tokens = model_details.get("max_new_tokens", 10)
+        self.temperature = model_details.get("temperature", 0.01)
+
         if labels:
             self.set_labels(labels)
 
@@ -56,6 +60,7 @@ class MistralFewShot:
         while True: 
             query_text = input("Enter prompt string: ")
             print(self.generate_answer(query_text))
+
 
 
     def generate_answer(self, question_text: str):
@@ -103,9 +108,9 @@ class MistralFewShot:
 
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = 10,
+            max_new_tokens = self.temperature,
             do_sample=True,
-            temperature=0.01, 
+            temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -130,9 +135,9 @@ class MistralFewShot:
                                     padding=True).to("cuda")
         
         outputs = self.model.generate(**model_inputs, 
-                                    max_new_tokens=10,
+                                    max_new_tokens=self.max_new_tokens,
                                     do_sample=True,
-                                    temperature=0.01, 
+                                    temperature=self.temperature, 
                                     pad_token_id=self.tokenizer.eos_token_id,
                                     return_dict_in_generate=True,
                                     output_scores=True)

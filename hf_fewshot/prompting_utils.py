@@ -27,11 +27,11 @@ def write_jsonlines(data, filepath):
             f.write('\n')
 
 
-def prep_prompt_new(
+def prep_prompt(
         targets: dict,
         output_var: str, 
         prompt: dict,
-        exemplar_path: str=None) -> list:
+        exemplars: list[dict]=None) -> list:
     
     """
     Takes a prompt, an exemplar path that is a jsonlines file, 
@@ -41,17 +41,15 @@ def prep_prompt_new(
     transformers 'apply_chat_template' method ()
     """
 
-
     beginner_prompt = prompt["zero_shot"]
     followup_prompts = prompt["followup"]
 
-    if not exemplar_path:
+    if not exemplars:
         return [{
             "role": "user", 
             "content":  beginner_prompt.format(**targets)
         }]
     
-    exemplars = load_jsonlines(exemplar_path)
     messages = [] 
     messages.append({
         "role": "user", 
@@ -80,7 +78,7 @@ def prep_prompt_new(
     })
     
 
-def prep_prompt(target_document: str, 
+def prep_prompt_old(target_document: str, 
                          topic: str,
                          prompt: dict,
                          exemplar_path: str=None) -> list:
