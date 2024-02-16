@@ -1,33 +1,33 @@
-# FILEPATH: /fs/clip-political/rupak/hf-fewshot/configs/config_mistral_fewshot.yaml
+# FILEPATH: /fs/clip-political/rupak/hf-fewshot/configs/example_config.yaml
 
 # Main header
 exemplars:
-    path: exemplar_filepath.jsonl  # path to the exemplar file
-    num_exemplars: 5
-    shuffle_exemplars: False 
+    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_exemplars.jsonl
+    num_exemplars: 12
+    shuffle: False
 
 prompts: 
-    path: /path/to/prompts.json 
-    prompt_name: stance_detection # should correspond to a key in the prompts json dict 
-    output_var: stance
+    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
+    prompt_name: utterance_level_agreement
+    output_var: label
     labels: [favor, against, neutral] # keep this empty for open labels
-    input_vars: [text, topic]
+    input_vars: [community, post, comment, reply]
     
 model_details:
     model_name: mistralai/Mistral-7B-Instruct-v0.2
     model_family: mistral
     scores: False
-    batch_size: 16
-    max_new_tokens: 256
+    batch_size: 8
+    max_new_tokens: 10
     temperature: 0.01
     
 # The dataset should be a jsonlines file with keys that are of the following type 
 dataset:
     # the unique_id of each example
-    dataset_name: fda-decomps
-    id_key: id
-    path: /path/to/dataset.jsonl
+    dataset_name: debagreement_march_2020
+    id_key: post_id
+    path: /fs/clip-political/rupak/hf-fewshot/sample_dataset.jsonl
     
 output:
-    output_dir: /path/to/output_dir
-    task_name: fewshot-stance
+    output_dir: /fs/clip-political/rupak/hf-fewshot/
+    task_name: fewshot-agreement-utterance-level

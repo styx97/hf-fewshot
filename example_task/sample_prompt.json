@@ -1,0 +1,7 @@
+{
+    "utterance_level_agreement": {
+        "zero_shot": "Given a comment and a reply on a social media platform under the context of a particular post, output 0 if the reply disagrees with the comment, 2 if the reply agrees with the comment, and 1 if the reply is neutral or does not express any stance towards the comment. You are only allowed to reply with 0: disagree, 2: agree, or 1:neutral, and output nothing after that. These posts and comments were taken from a community about {community}.\n\n#####\n\nPOST: {post}\nCOMMENT: {comment}\nREPLY: {reply}\nLABEL: ",
+
+        "followup": "Community about: {community}\n\nPOST: {post}\nCOMMENT: {comment}\nREPLY: {reply}\nLABEL: "
+    }
+}
