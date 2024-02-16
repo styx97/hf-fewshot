@@ -1,4 +1,5 @@
 import json, yaml
+import numpy as np 
 
 def load_jsonlines(filepath): 
     with open(filepath, 'r') as f: 
@@ -31,7 +32,10 @@ def prep_prompt(
         targets: dict,
         output_var: str, 
         prompt: dict,
-        exemplars: list[dict]=None) -> list:
+        num_exemplars: int, 
+        exemplars: list[dict]=None, 
+        shuffle_exemplars: bool=True, 
+        ) -> list:
     
     
     """
@@ -50,6 +54,15 @@ def prep_prompt(
             "role": "user", 
             "content":  beginner_prompt.format(**targets)
         }]
+    
+    
+    # if exemplars are provided, we need to shuffle them
+    if shuffle_exemplars:
+        np.random.seed(42)
+        np.random.shuffle(exemplars)
+    
+    # take the first num_exemplars
+    exemplars = exemplars[:num_exemplars]
     
     messages = [] 
     messages.append({

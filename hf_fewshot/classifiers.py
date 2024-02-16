@@ -16,6 +16,8 @@ def few_shot_classifier(config_file: str):
     model_name = config["model_details"]["model_name"]
     
     exemplars = load_jsonlines(config["exemplars"]["path"])
+    shuffle_exemplars = config["exemplars"]["shuffle"]
+    num_exemplars = config["exemplars"]["num_exemplars"]
 
     prompts = load_json(config["prompts"]["path"])
     prompt = prompts[config["prompts"]["prompt_name"]]
@@ -49,7 +51,10 @@ def few_shot_classifier(config_file: str):
     query_texts = [prep_prompt(targets,
                                 output_var,
                                 prompt=prompt,
-                                exemplars=exemplars) 
+                                num_exemplars=num_exemplars, 
+                                exemplars=exemplars, 
+                                shuffle_exemplars=shuffle_exemplars,
+                                ) 
                                         for targets in dataset]
 
 
