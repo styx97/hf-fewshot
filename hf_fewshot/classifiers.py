@@ -15,7 +15,10 @@ def few_shot_classifier(config_file: str):
     model_family = config["model_details"]["model_family"]
     model_name = config["model_details"]["model_name"]
     
-    exemplars = load_jsonlines(config["exemplars"]["path"])
+    exemplars_path = config["exemplars"]["path"]
+    
+    exemplars = load_jsonlines(exemplars_path) if exemplars_path !='None' else None
+    
     shuffle_exemplars = config["exemplars"]["shuffle"]
     num_exemplars = config["exemplars"]["num_exemplars"]
 
@@ -39,9 +42,10 @@ def few_shot_classifier(config_file: str):
     the same as the number of variables in the exemplar 
     """
     all_vars = set(input_vars + [output_var])
-    exemplar_vars = set(exemplars[0].keys())
-    assert all_vars == exemplar_vars, (f"Variables in the prompt: {all_vars} are not the"
-                                    f"same as the variables in the exemplar: {exemplar_vars}")
+    if exemplars:
+        exemplar_vars = set(exemplars[0].keys())
+        assert all_vars == exemplar_vars, (f"Variables in the prompt: {all_vars} are not the"
+                                        f"same as the variables in the exemplar: {exemplar_vars}")
 
     all_dataset_vars = set(dataset[0].keys())
     # Check that all variables in the prompt are in the dataset
