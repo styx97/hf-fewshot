@@ -61,7 +61,18 @@ def few_shot_classifier(config_file: str):
                                 ) 
                                         for targets in dataset]
 
+    with open(outfile, "r") as f: 
+        existing_data = [json.loads(line.strip()) for line in f]
+        if len(existing_data) > 0:
+            print("Found existing data in ", outfile)
+            print("setting start index to ", len(existing_data))
+            start_index = len(existing_data)
+        else: 
+            start_index = 0
 
+    print(f"Start index is: {start_index}")    
+
+    # model loading 
     model_details = config["model_details"]
     model = model_map[model_family](model_name=model_name,
                                 labels=labels, 
@@ -69,11 +80,16 @@ def few_shot_classifier(config_file: str):
     
     
     print(f"Generated {len(query_texts)} input prompts for {model_name}")
-    pbar = tqdm(total=len(query_texts), desc="Generating responses")
     
-    with open(outfile, 'w') as f:
+    pbar = tqdm(total=len(query_texts) - start_index, desc="Generating responses")
+    with open(outfile, "a+") as f:
+        print("Loading outfile")
+        # If not starting from zero, first add a newline 
+        if start_index > 0:
+            f.write("\n")
+    
         print("Writing responses to ", outfile)
-        for i in range(0, len(query_texts), batch_size):
+        for i in range(start_index, len(query_texts), batch_size):
             pbar.update(batch_size)
             batch_query_texts = query_texts[i:i+batch_size]
             ids = all_id_values[i:i+batch_size]

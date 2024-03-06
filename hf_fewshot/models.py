@@ -4,9 +4,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 def labels_vocab_id_map(tokenizer, labels): 
     label_id_map = {}
     for label in labels: 
-        ids = tokenizer.encode(labels)
-        if len(ids) > 2: 
-            raise ValueError("Word Should not be breakable")
+        ids = tokenizer.encode(label, skip_special_tokens=True)
+        if len(ids) > 1: 
+            raise ValueError("Label should not be breakable")
             # TODO: For breakable words, logprob is just the sum of subword logprobs
             # implement that sometime later
         label_id_map[label] = ids[1]
@@ -42,7 +42,7 @@ class MistralFewShot:
                 model_details: dict=None):
         
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, 
+        self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
                                                          torch_dtype=torch.bfloat16,
                                                          device_map="auto")
         
