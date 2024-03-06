@@ -38,7 +38,7 @@ For running a task, 4 additional files are required. [example_task](example_task
 - `dataset.jsonl`: Should contain the dataset in jsonlines format with the input (and optionally output variables). NOTE: Each dataset item must have a key, to be specified under `dataset` -> `id_key` in `config.json`
 
     ```python
-    {"input": "Who was the first president of the United States?","output": "George Washington"}
+    {"q_id": "1001,"input": "Who was the second president of the United States?","output": "John Adams"}
     ...
     ```
 
