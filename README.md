@@ -8,7 +8,7 @@ This is meant to be as lightweight as possible, and is not meant to be a full-fl
 ---
 
 ### Files required : 
-For running a task, 4 additional files are required. In [example_task](example_task), we have an example of a prediction task, on the [DEBAGREEMENT](https://scale.com/open-av-datasets/oxford) dataset. A brief description of the 4 files is as follows :
+For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a prediction task on the [DEBAGREEMENT](https://scale.com/open-av-datasets/oxford) dataset. A brief description of the 4 files is as follows :
 
 - `prompt.json` : Should contain prompts for generation. Each prompt should be in the following format 
 
