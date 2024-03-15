@@ -1,11 +1,14 @@
 from tqdm.auto import tqdm
 import json 
 from pathlib import Path
-from hf_fewshot.models import MistralFewShot
+from hf_fewshot.models import MistralFewShot, HFFewShot
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
+import numpy as np
+import os 
 
 model_map = {
     "mistral": MistralFewShot,
+    "hf-general": HFFewShot, 
 }
 # TODO: add support for other models
 
@@ -29,7 +32,7 @@ def few_shot_classifier(config_file: str):
     
     input_vars = config["prompts"]["input_vars"]
     output_var = config["prompts"]["output_var"]
-    labels = config["prompts"]["labels"]
+    #labels = config["prompts"]["labels"]
     
     dataset = load_jsonlines(config["dataset"]["path"])
     id_key = config["dataset"]["id_key"]
@@ -52,32 +55,39 @@ def few_shot_classifier(config_file: str):
     assert set(input_vars).issubset(all_dataset_vars), (f"Variables in the prompt: {input_vars} are not "
                                                     f"found in the dataset: {all_dataset_vars}")
 
+    # shuffle the exemplars here, run all prompts on the same order 
+    if shuffle_exemplars:
+        np.random.seed(42)
+        np.random.shuffle(exemplars)
+    
+    # take the first num_exemplars
+    exemplars = exemplars[:num_exemplars]
+    
     query_texts = [prep_prompt(targets,
                                 output_var,
                                 prompt=prompt,
-                                num_exemplars=num_exemplars, 
                                 exemplars=exemplars, 
-                                shuffle_exemplars=shuffle_exemplars,
                                 ) 
                                         for targets in dataset]
 
-    with open(outfile, "r") as f: 
-        existing_data = [json.loads(line.strip()) for line in f]
+    if outfile.is_file():
+        existing_data = load_jsonlines(outfile)
         if len(existing_data) > 0:
             print("Found existing data in ", outfile)
             print("setting start index to ", len(existing_data))
             start_index = len(existing_data)
         else: 
             start_index = 0
+    else:
+        start_index = 0
 
     print(f"Start index is: {start_index}")    
 
     # model loading 
     model_details = config["model_details"]
     model = model_map[model_family](model_name=model_name,
-                                labels=labels, 
                                 model_details=model_details)
-    
+    print("Model loaded")
     
     print(f"Generated {len(query_texts)} input prompts for {model_name}")
     

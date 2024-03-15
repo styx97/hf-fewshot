@@ -1,5 +1,6 @@
 import torch 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import BitsAndBytesConfig
 
 def labels_vocab_id_map(tokenizer, labels): 
     label_id_map = {}
@@ -34,6 +35,81 @@ def get_label_logprobs(scores, label_id_map):
 
     assert len(batch_logprobs) == batch_size, "Batch size mismatch"
     return batch_logprobs
+
+class HFFewShot:
+    def __init__(self,
+                model_name: str, 
+                model_details: dict=None):
+        
+        """
+        A general class for loading huggingface models with a 
+        standard set of parameters. 
+        """
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        if "quantization" not in model_details: 
+            self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
+                                                         torch_dtype=torch.bfloat16,
+                                                         device_map="auto")
+        else: 
+            print("Quantization is set to ", model_details["quantization"])
+            # write the quantization logic 
+            if model_details["quantization"] == "8bit": 
+                self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
+                                                         load_in_8bit=True,
+                                                         device_map="auto")
+                
+            elif model_details["quantization"] == "4bit":
+                bnb_config = BitsAndBytesConfig(
+                                load_in_4bit=True,
+                                bnb_4bit_use_double_quant=True,
+                                bnb_4bit_quant_type="nf4",
+                                bnb_4bit_compute_dtype=torch.bfloat16
+                                )
+
+                self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
+                                                         quantization_config=bnb_config,
+                                                         device_map="auto")
+        
+        self.max_new_tokens = model_details.get("max_new_tokens", 10)
+        self.temperature = model_details.get("temperature", 0.01)
+
+    def debug(self): 
+        while True: 
+            query_text = input("Enter prompt string: ")
+            print(self.generate_answer(query_text))
+
+    def generate_answer_batch(self, 
+                        query_texts: list) -> list[str]: 
+    
+        """
+        Code to batch process multiple questions. 
+        Can be generalized to other types of query processing.
+        TODO: Get FlashAttention2 to work with this.
+        """
+        
+        messages = [
+            self.tokenizer.apply_chat_template(messages,
+                                                tokenize=False) 
+                                                for messages in query_texts]
+
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        model_inputs = self.tokenizer(messages,
+                                    return_tensors="pt",
+                                    padding=True).to("cuda")
+
+        outputs = self.model.generate(
+            **model_inputs, 
+            max_new_tokens = self.max_new_tokens,
+            do_sample=True,
+            temperature=self.temperature, 
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+
+        answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+        
 
 class MistralFewShot:
     def __init__(self, 

@@ -23,18 +23,15 @@ def write_json(data, filepath):
 
 def write_jsonlines(data, filepath): 
     with open(filepath, 'w') as f: 
-        for line in data: 
-            json.dump(line, f)
-            f.write('\n')
-
+        for index, line in enumerate(data):
+            s = json.dumps(line)
+            f.write('\n'*(index>0) + s)
 
 def prep_prompt(
         targets: dict,
         output_var: str, 
         prompt: dict,
-        num_exemplars: int, 
-        exemplars: list[dict]=None, 
-        shuffle_exemplars: bool=True, 
+        exemplars: list[dict]=None
         ) -> list:
     
     
@@ -55,15 +52,7 @@ def prep_prompt(
             "content":  beginner_prompt.format(**targets)
         }]
     
-    
-    # if exemplars are provided, we need to shuffle them
-    if shuffle_exemplars:
-        np.random.seed(42)
-        np.random.shuffle(exemplars)
-    
-    # take the first num_exemplars
-    exemplars = exemplars[:num_exemplars]
-    
+
     messages = [] 
     messages.append({
         "role": "user", 
