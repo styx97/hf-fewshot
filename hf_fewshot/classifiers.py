@@ -5,6 +5,11 @@ from hf_fewshot.models import MistralFewShot, HFFewShot
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
 import numpy as np
 import os 
+from dotenv import load_dotenv
+
+# update HF and OPENAI_TOKENS 
+load_dotenv("../../.env")
+
 
 model_map = {
     "mistral": MistralFewShot,
@@ -95,9 +100,7 @@ def few_shot_classifier(config_file: str):
     with open(outfile, "a+") as f:
         print("Loading outfile")
         # If not starting from zero, first add a newline 
-        if start_index > 0:
-            f.write("\n")
-    
+        
         print("Writing responses to ", outfile)
         for i in range(start_index, len(query_texts), batch_size):
             pbar.update(batch_size)

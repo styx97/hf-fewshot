@@ -36,6 +36,14 @@ def get_label_logprobs(scores, label_id_map):
     assert len(batch_logprobs) == batch_size, "Batch size mismatch"
     return batch_logprobs
 
+class GPTTurbo:
+    """
+    a class the calls an openai model to generate text
+    The openai key is fetched from the env variable OPENAI_API_KEY
+    """
+    
+                 
+                  
 class HFFewShot:
     def __init__(self,
                 model_name: str, 
@@ -46,19 +54,19 @@ class HFFewShot:
         standard set of parameters. 
         """
         
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 
-        if "quantization" not in model_details: 
+        if "quantization" not in model_details or model_details["quantization"] is None: 
             self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
-                                                         torch_dtype=torch.bfloat16,
-                                                         device_map="auto")
+                                                        device_map="auto", 
+                                                        torch_dtype="auto").eval()
         else: 
             print("Quantization is set to ", model_details["quantization"])
             # write the quantization logic 
             if model_details["quantization"] == "8bit": 
                 self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
                                                          load_in_8bit=True,
-                                                         device_map="auto")
+                                                         device_map="auto").eval()
                 
             elif model_details["quantization"] == "4bit":
                 bnb_config = BitsAndBytesConfig(
@@ -70,7 +78,7 @@ class HFFewShot:
 
                 self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
                                                          quantization_config=bnb_config,
-                                                         device_map="auto")
+                                                         device_map="auto").eval()
         
         self.max_new_tokens = model_details.get("max_new_tokens", 10)
         self.temperature = model_details.get("temperature", 0.01)
@@ -99,6 +107,7 @@ class HFFewShot:
                                     return_tensors="pt",
                                     padding=True).to("cuda")
 
+
         outputs = self.model.generate(
             **model_inputs, 
             max_new_tokens = self.max_new_tokens,
@@ -108,6 +117,7 @@ class HFFewShot:
         )
 
         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        
         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
         
 
