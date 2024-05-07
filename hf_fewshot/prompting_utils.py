@@ -27,14 +27,7 @@ def write_jsonlines(data, filepath):
             s = json.dumps(line)
             f.write('\n'*(index>0) + s)
 
-def prep_prompt(
-        targets: dict,
-        output_var: str, 
-        prompt: dict,
-        exemplars: list[dict]=None
-        ) -> list:
-    
-    
+def prep_prompt(targets: dict, output_var: str, prompt: dict, exemplars: list[dict]=None ) -> list:
     """
     Takes a prompt, an exemplar path that is a jsonlines file, 
     and targets that contain the data to run predictions on. 
