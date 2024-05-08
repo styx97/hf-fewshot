@@ -1,11 +1,12 @@
 from tqdm.auto import tqdm
 import json 
 from pathlib import Path
-from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot
+from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewShot
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
 import numpy as np
 import os 
 from dotenv import load_dotenv
+import argparse
 
 # update HF and OPENAI_TOKENS 
 load_dotenv("../../.env")
@@ -14,7 +15,8 @@ load_dotenv("../../.env")
 model_map = {
     "mistral": MistralFewShot,
     "hf-general": HFFewShot,
-    "llama": LlamaFewShot
+    "llama": LlamaFewShot, 
+    "gpt": GPTFewShot
 }
 # TODO: add support for other models
 
@@ -34,8 +36,17 @@ def few_shot_classifier(config_file: str):
     prompts = load_json(config["prompts"]["path"])
     prompt = prompts[config["prompts"]["prompt_name"]]
     batch_size = config["model_details"]["batch_size"]
-    outfile = Path(config['output']['output_dir']) / f"{config['output']['task_name']}_on_{config['dataset']['dataset_name']}.jsonl"
     
+    if config["output"]["output_file"]: 
+        outfile = Path(config["output"]["output_dir"]) / config["output"]["output_file"]
+    else: 
+        outfile = Path(config['output']['output_dir']) / f"{config['output']['task_name']}_on_{config['dataset']['dataset_name']}_{model_name}.jsonl"
+
+    # if the output file doesn't exist, create the intermediate directiories and the file
+    if not outfile.is_file():
+        outfile.parent.mkdir(parents=True, exist_ok=True)
+        outfile.touch()
+        
     input_vars = config["prompts"]["input_vars"]
     output_var = config["prompts"]["output_var"]
     #labels = config["prompts"]["labels"]
@@ -75,6 +86,7 @@ def few_shot_classifier(config_file: str):
                                 exemplars=exemplars, 
                                 ) 
                                         for targets in dataset]
+    
 
     if outfile.is_file():
         existing_data = load_jsonlines(outfile)
@@ -98,6 +110,7 @@ def few_shot_classifier(config_file: str):
     print(f"Generated {len(query_texts)} input prompts for {model_name}")
     
     pbar = tqdm(total=len(query_texts) - start_index, desc="Generating responses")
+
     with open(outfile, "a+") as f:
         print("Loading outfile")
         # If not starting from zero, first add a newline 
@@ -122,3 +135,19 @@ def few_shot_classifier(config_file: str):
                     f.write('\n')
     
     pbar.close()
+
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description="Run few-shot classification on a dataset")
+    parser.add_argument("--config", 
+                        type=str, 
+                        help="Path to the config file")
+
+    return parser
+
+def main(): 
+    parser = get_args()
+    
+    args = parser.parse_args()
+    few_shot_classifier(args.config)

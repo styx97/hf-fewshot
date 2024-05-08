@@ -3,19 +3,19 @@
 # Main header
 exemplars:
     path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_exemplars.jsonl
-    num_exemplars: 12
+    num_exemplars: 2
     shuffle: False
 
 prompts: 
     path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
-    prompt_name: utterance_level_agreement
-    output_var: label
-    labels: [favor, against, neutral] # keep this empty for open labels
-    input_vars: [community, post, comment, reply]
+    prompt_name: question_answering_prompt
+    output_var: answer
+    labels:  # keep this empty for open labels
+    input_vars: [question]
     
 model_details:
-    model_name: mistralai/Mistral-7B-Instruct-v0.2
-    model_family: mistral
+    model_name: gpt-4-turbo
+    model_family: gpt
     scores: False
     batch_size: 8
     max_new_tokens: 10
@@ -24,10 +24,11 @@ model_details:
 # The dataset should be a jsonlines file with keys that are of the following type 
 dataset:
     # the unique_id of each example
-    dataset_name: debagreement_march_2020
-    id_key: post_id
-    path: /fs/clip-political/rupak/hf-fewshot/sample_dataset.jsonl
+    dataset_name: test-qa-dataset
+    id_key: q_id
+    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_dataset.jsonl
     
 output:
-    output_dir: /fs/clip-political/rupak/hf-fewshot/
-    task_name: fewshot-agreement-utterance-level
+    output_dir: /fs/clip-political/rupak/hf-fewshot/outputs
+    output_file: sample_output.jsonl
+    task_name: simple-qa

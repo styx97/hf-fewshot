@@ -1,6 +1,8 @@
 import torch 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
+import os 
+from openai import OpenAI 
 
 def labels_vocab_id_map(tokenizer, labels): 
     label_id_map = {}
@@ -36,12 +38,62 @@ def get_label_logprobs(scores, label_id_map):
     assert len(batch_logprobs) == batch_size, "Batch size mismatch"
     return batch_logprobs
 
-class GPTTurbo:
+class GPTFewShot:
     """
     a class the calls an openai model to generate text
     The openai key is fetched from the env variable OPENAI_API_KEY
     """
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY not set in environment variables")
+    
 
+    def __init__(self, 
+                 model_name: str,
+                model_details: dict=None):
+        
+        self.model = model_name 
+        self.model_details = model_details
+        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        
+
+    def generate_answer_debug(self, question_text: str):
+        return self.client.chat.completions.create(
+            model=self.model, 
+            messages=[
+                {"role": "user", "content": question_text}
+            ],
+            temperature = self.model_details['temperature'], 
+            max_tokens = self.model_details['max_new_tokens'], 
+            # get top_p if provided 
+            top_p = self.model_details.get("top_p", 1),
+
+        )
+    
+    def generate_answer(self, messages: list[dict]):
+        answer_object = self.client.chat.completions.create(
+            model=self.model, 
+            messages=messages,
+            temperature = self.model_details['temperature'], 
+            max_tokens = self.model_details['max_new_tokens'], 
+            # get top_p if provided 
+            top_p = self.model_details.get("top_p", 1),
+        )
+
+        return answer_object
+    
+    def generate_answer_batch(self,
+                              query_texts: list) -> list[str]: 
+        
+        
+        answer_texts = []
+
+        for message in query_texts: 
+            answer_object = self.generate_answer(message)
+            answer_text = answer_object.choices[0].message.content
+            answer_texts.append(answer_text)
+
+        return answer_texts
+            
 
 class HFFewShot:
     def __init__(self,
@@ -109,6 +161,7 @@ class HFFewShot:
                                                 for messages in query_texts]
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
+        
         model_inputs = self.tokenizer(messages,
                                     return_tensors="pt",
                                     padding=True).to("cuda")

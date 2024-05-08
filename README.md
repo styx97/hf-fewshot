@@ -8,7 +8,7 @@ This is meant to be as lightweight as possible, and is not meant to be a full-fl
 ---
 
 ### Files required : 
-For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a prediction task on the [DEBAGREEMENT](https://scale.com/open-av-datasets/oxford) dataset. A brief description of the 4 files is as follows :
+For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a simple question answering task. A brief description of the 4 files is as follows :
 
 - `prompt.json` : Should contain prompts for generation. Each prompt should be in the following format 
 
@@ -38,10 +38,23 @@ For running a task, 4 additional files are required. [example_task](example_task
 - `dataset.jsonl`: Should contain the dataset in jsonlines format with the input (and optionally output variables). NOTE: Each dataset item must have a key, to be specified under `dataset` -> `id_key` in `config.json`
 
     ```python
-    {"q_id": "1001,"input": "Who was the second president of the United States?","output": "John Adams"}
+    {"q_id": "1001", "input": "Who was the second president of the United States?", "output": "John Adams"}
     ...
     ```
 
     See [examples/sample_dataset.jsonl](example_task/sample_dataset.jsonl) for a sample file.
 
 - `config.json`: Should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.json](configs/example_config.yml) for a sample file.
+
+
+---
+
+### Running a task :
+
+To run fewshot prompting, run the following command : 
+
+```bash
+hf_fewshot --config configs/example_config.yml
+```
+
+If `output_file` is specified in the config, it will be saved to that location. Otherwise, a file will be automatically generated in that directory prior to saving. 
