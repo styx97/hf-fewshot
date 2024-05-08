@@ -10,7 +10,7 @@ This is meant to be as lightweight as possible, and is not meant to be a full-fl
 ### Files required : 
 For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a simple question answering task. A brief description of the 4 files is as follows :
 
-- `prompt.json` : Should contain prompts for generation. Each prompt should be in the following format 
+- A `prompt.json` should contain prompts for generation. Each prompt should be in the following format 
 
     ```python
     {
@@ -25,7 +25,7 @@ For running a task, 4 additional files are required. [example_task](example_task
     ```
     For a more involved example of a prompt, see [examples/sample_prompt.json](example_task/sample_prompt.json). 
 
-- `exemplars.jsonl` : Should contain exemplars in jsonlines format with the input and output variables. 
+- An `exemplars.jsonl` should contain exemplars in jsonlines format with the input and output variables. 
 
     ```python
     {"input": "Who was the first president of the United States?","output": "George Washington"}
@@ -35,7 +35,7 @@ For running a task, 4 additional files are required. [example_task](example_task
     See [examples/sample_exemplars.jsonl](example_task/sample_exemplars.jsonl) for a sample file.
 
 
-- `dataset.jsonl`: Should contain the dataset in jsonlines format with the input (and optionally output variables). NOTE: Each dataset item must have a key, to be specified under `dataset` -> `id_key` in `config.json`
+- A `dataset.jsonl` should contain the dataset in jsonlines format with the input (and optionally output variables). NOTE: Each dataset item must have a key, to be specified under `dataset` -> `id_key` in `config.json`
 
     ```python
     {"q_id": "1001", "input": "Who was the second president of the United States?", "output": "John Adams"}
@@ -44,7 +44,9 @@ For running a task, 4 additional files are required. [example_task](example_task
 
     See [examples/sample_dataset.jsonl](example_task/sample_dataset.jsonl) for a sample file.
 
-- `config.json`: Should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.json](configs/example_config.yml) for a sample file.
+- A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.yml](configs/example_config.yml) for a sample file.
+
+- If using OpenAI, add the OpenAI API key to your environment variables as `OPENAI_API_KEY`. If using conda, you can do this by running `conda env config vars set OPENAI_API_KEY=<your key>`.
 
 
 ---
