@@ -7,7 +7,7 @@ This is meant to be as lightweight as possible, and is not meant to be a full-fl
 
 ---
 
-### Files required : 
+#### Files required : 
 For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a simple question answering task. A brief description of the 4 files is as follows :
 
 - A `prompt.json` should contain prompts for generation. Each prompt should be in the following format 
@@ -50,8 +50,19 @@ For running a task, 4 additional files are required. [example_task](example_task
 
 
 ---
+#### Installation :
 
-### Running a task :
+After cloning the repository, run the following commands: 
+
+```bash
+cd hf-fewshot
+pip install -e .
+```
+
+
+
+
+#### Running a task :
 
 To run fewshot prompting, run the following command : 
 
