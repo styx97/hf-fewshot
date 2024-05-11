@@ -50,6 +50,13 @@ For running a task, 4 additional files are required. [example_task](example_task
 ---
 #### Installation :
 
+Create an empty conda enironment: 
+
+```bash
+conda create -n hf-fewshot python=3.11
+conda activate hf-fewshot
+```
+
 After cloning the repository, run the following commands: 
 
 ```bash
