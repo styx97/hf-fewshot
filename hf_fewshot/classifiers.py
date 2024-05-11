@@ -5,11 +5,11 @@ from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewSho
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
 import numpy as np
 import os 
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 import argparse
 
 # update HF and OPENAI_TOKENS 
-load_dotenv("../../.env")
+#load_dotenv("../../.env")
 
 
 model_map = {

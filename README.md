@@ -46,8 +46,6 @@ For running a task, 4 additional files are required. [example_task](example_task
 
 - A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.yml](configs/example_config.yml) for a sample file.
 
-- If using OpenAI, add the OpenAI API key to your environment variables as `OPENAI_API_KEY`. If using conda, you can do this by running `conda env config vars set OPENAI_API_KEY=<your key>`.
-
 
 ---
 #### Installation :
@@ -59,7 +57,9 @@ cd hf-fewshot
 pip install -e .
 ```
 
+- If using OpenAI, add the OpenAI API key to your environment variables as `OPENAI_API_KEY`. If using conda, you can do this by running `conda env config vars set OPENAI_API_KEY=<your key>`.
 
+- If using a huggingface "Gated" model (such as Llama 3), add the Huggingface access token to an environment variable called `HF_TOKEN` by running `conda env config vars set HF_TOKEN=<your token>`.
 
 
 #### Running a task :
