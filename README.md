@@ -47,6 +47,7 @@ For running a task, 4 additional files are required. [example_task](example_task
 - A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.yml](configs/example_config.yml) for a sample file.
 
 
+
 ---
 #### Installation :
 
@@ -60,6 +61,9 @@ conda activate hf-fewshot
 After cloning the repository, run the following commands: 
 
 ```bash
+# first create an empty conda environment 
+conda create -n hf_fewshot python=3.11
+
 cd hf-fewshot
 pip install -e .
 ```
