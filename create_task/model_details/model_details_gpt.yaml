@@ -1,0 +1,8 @@
+model_details:
+    model_name: gpt-4-turbo
+    model_family: gpt
+    scores: False
+    batch_size: 8
+    max_new_tokens: 10
+    temperature: 0.01
+

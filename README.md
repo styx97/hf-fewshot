@@ -1,7 +1,7 @@
 # hf-fewshot
 A barebones set of utilities that help run few-shot prompting using hf
 
-Currently, suppoorts few-shot classification (through generation) along with generating logprobs for each class. 
+Currently, supports few-shot classification (through generation) along with generating logprobs for each class. 
 
 This is meant to be as lightweight as possible, and is not meant to be a full-fledged library.
 
@@ -47,6 +47,7 @@ For running a task, 4 additional files are required. [example_task](example_task
 - A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.yml](configs/example_config.yml) for a sample file.
 
 
+See the [create_task](./create_task) subdirectory for convenient code that will create these files automatically for you from CSV and text files, which you may find more convenient.
 
 ---
 #### Installation :
@@ -81,4 +82,8 @@ To run fewshot prompting, run the following command :
 hf_fewshot --config configs/example_config.yml
 ```
 
-If `output_file` is specified in the config, it will be saved to that location. Otherwise, a file will be automatically generated in that directory prior to saving. 
+If `output_file` is specified in the config, it will be saved to that location. Otherwise, a file will be automatically generated in that directory prior to saving.
+
+
+
+
