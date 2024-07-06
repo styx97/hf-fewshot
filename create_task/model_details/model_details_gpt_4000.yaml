@@ -1,10 +1,9 @@
-# This version is oriented toward classification, since
-# it limits responses to 10 tokens.
+# This version permits up to 4000 tokens in the response
 model_details:
     model_name: gpt-4-turbo
     model_family: gpt
     scores: False
     batch_size: 8
-    max_new_tokens: 10
+    max_new_tokens: 4000
     temperature: 0.01
 

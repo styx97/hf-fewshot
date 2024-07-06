@@ -2,6 +2,8 @@
 
 #  `create_hf_fewshot_task.py` 
 
+This program takes inputs for a few-shot task in a convenient format (CSV and text), and automatically produces a directory containing the JSON and YAML files needed by the hf-fewshot package, making it unnecessary to create the files directly in those formats. When done it tells you the command line you need to execute.
+
 The `hf-fewshot` package requires four files for any given task:
 
 - `prompt.json`, which contains the LLM prompt
@@ -9,7 +11,7 @@ The `hf-fewshot` package requires four files for any given task:
 - `dataset.jsonl`, which contains the test items
 - `config.yml`, a configuration file specifying the above files, model details, and where to put output
 
-This program takes inputs for a few-shot task in a convenient format (CSV and text), and automatically produces a directory containing the JSON and YAML files needed by the hf-fewshot package, making it unnecessary to create the files directly in those formats. Below find:
+Below find:
 
 - Explanation of program arguments
 
@@ -87,7 +89,7 @@ python create_hf_fewshot_task.py \
 
 ### GPT (which runs using the OpenAI API)
 
-Here are the contents of `model_details/model_details_gpt.yaml`. 
+Here are the contents of `model_details/model_details_gpt.yaml`. Note, in particular, the low value for `max_new_tokens`, which limits the length of the LLM response. This particular set of model details is set up for classification under the assumption that the LLM response will contain short labels. Set that value higher if/as necessary.
 
 ```
 model_details:
@@ -117,9 +119,9 @@ model_name: NAME_OF_HUGGINGFACE_MODEL
        # 8 is a good start, change to 16 if you don't run out of GPU memory; if so, possibly truncate inputs
        # if data are inconsistent in length, some batches might run out of memory and some not
     max_new_tokens: 32
-       length of output - generally good to keep short
+       maximum tokens in LLM loutput - generally good to keep as short as possible
     temperature: 0.7
-       # Note thattemperature affects different models differently.
+       # Note that temperature affects different models differently.
        # Typically low for classification, IE, etc.; high for generation creativity/variety
 ```
        
