@@ -4,6 +4,8 @@
 
 This program takes inputs for a few-shot task in a convenient format (CSV and text), and automatically produces a directory containing the JSON and YAML files needed by the hf-fewshot package, making it unnecessary to create the files directly in those formats. When done it tells you the command line you need to execute.
 
+**For a simple, non-conversational text-based UI based on this, see [TextUI.md](TextUI.md).**
+
 The `hf-fewshot` package requires four files for any given task:
 
 - `prompt.json`, which contains the LLM prompt
@@ -167,3 +169,4 @@ setenv FLAIR_CACHE_ROOT    "${XDG_CACHE}/flair"
 
 
 
+****
