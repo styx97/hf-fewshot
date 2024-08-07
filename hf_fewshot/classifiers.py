@@ -62,24 +62,25 @@ def few_shot_classifier(config_file: str):
     the same as the number of variables in the exemplar 
     """
     all_vars = set(input_vars + [output_var])
+
     if exemplars:
         exemplar_vars = set(exemplars[0].keys())
         assert all_vars == exemplar_vars, (f"Variables in the prompt: {all_vars} are not the"
                                         f"same as the variables in the exemplar: {exemplar_vars}")
-
+        # shuffle the exemplars here, run all prompts on the same order 
+        if shuffle_exemplars:
+            np.random.seed(42)
+            np.random.shuffle(exemplars)
+        
+        # take the first num_exemplars
+        exemplars = exemplars[:num_exemplars]
+    
     all_dataset_vars = set(dataset[0].keys())
     # Check that all variables in the prompt are in the dataset
     assert set(input_vars).issubset(all_dataset_vars), (f"Variables in the prompt: {input_vars} are not "
                                                     f"found in the dataset: {all_dataset_vars}")
 
-    # shuffle the exemplars here, run all prompts on the same order 
-    if shuffle_exemplars:
-        np.random.seed(42)
-        np.random.shuffle(exemplars)
-    
-    # take the first num_exemplars
-    exemplars = exemplars[:num_exemplars]
-    
+     
     query_texts = [prep_prompt(targets,
                                 output_var,
                                 prompt=prompt,

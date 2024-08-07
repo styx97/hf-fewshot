@@ -8,7 +8,7 @@ setup(
         'console_scripts': [
             'hf_fewshot = hf_fewshot.classifiers:main',
         ],
-    }, 
+    },
     install_requires=[
         "transformers=4.40.2",
         "torch=2.3.0",
