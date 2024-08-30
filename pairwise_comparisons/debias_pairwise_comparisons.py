@@ -9,7 +9,9 @@ Implements basic debiasing:
 from hf_fewshot.models import get_logsoftmax, LlamaFewShot 
 from hf_fewshot.prompting_utils import load_jsonlines, write_jsonlines
 import numpy as np 
+import argparse
 from tqdm import tqdm 
+from torch import cuda
 
 def generate_answer_batch_logprobs(model_obj: LlamaFewShot, 
                         query_texts: list) -> list[str]: 
@@ -68,7 +70,6 @@ def get_logprobs(scores):
 
     # find out the batch size 
     batch_size = scores[0].shape[0]
-    print(batch_size)
     logprobs = [] 
     for index in range(batch_size):
         curr_logprobs = []
@@ -96,61 +97,133 @@ def get_option_preferences(model: LlamaFewShot,
     for index in range(num_examples):
         option_logprobs  = {option: logprobs[index, 0, option_token_dict[option]] 
                             for option in options}
-        option_logprob_ratios = {option: option_logprobs[option]/np.sum(list(option_logprobs.values())) 
-                                 for option in options}
+        
+        # convert logprobs to probabilities 
+        option_probs = {option: float(np.exp(logprob)) for option, logprob in option_logprobs.items()}
 
-        preferences.append(option_logprob_ratios)
+        preferences.append(option_probs)
 
     return preferences
 
 
+def add_args(): 
+    parser = argparse.ArgumentParser(description="Debiasing pairwise comparisons")
+    parser.add_argument("--input", type=str, help="Input file path", required=True)
+    parser.add_argument("--output", type=str, help="Output file path", required=True)
+    parser.add_argument("--model_name", type=str, help="Model name", default="meta-llama/Meta-Llama-3-8B-Instruct")
+    
+    return parser 
 
-if __name__ == "__main__": 
+
+def prep_prompts(pair_data: dict) -> list: 
+    sep = "\n\n"
+    messages = [
+        {
+            "role": "system",
+            "content": "You are helpful digital assistant. You will be asked to compare two text items - Text 1 and Text 2 based on a criteria. Reply only with 1 or 2."
+        },
+    ]
+
+    # first, add the instruction with the first message 
+    instruction = pair_data["prompt"]['instructions']
+    message_content = pair_data["prompt"]["message_contents"]
+    messages.append({
+        "role": "user",
+        "content": instruction + sep + sep.join(message_content[0][:2])
+    })
+
+    messages.append({
+        "role": "assistant",
+        "content": message_content[0][2]
+    })
+
+    # for the rest of the messages except the last one, add the followup prompts
+    for index in range(1, len(message_content)-1):
+        messages.append({
+            "role": "user",
+            "content": sep.join(message_content[index][:2])
+        })
+
+        messages.append({
+            "role": "assistant",
+            "content": message_content[index][2]
+        })
+
+    # add the last message
+    messages.append({
+        "role": "user",
+        "content": message_content[-1] + "\n" + pair_data["prompt"]["ending"]
+    })
+
+    return messages
+
+
+def compute_scores(file_path: str, output_path: str, model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"): 
 
     model_details = {
-    'quantization': '4bit',
-    'max_new_tokens': 4,
-    'temperature': 0.01,
-    'do_sample': False,
-    'return_dict_in_generate': True,
-    'model_family': 'llama',
-    'model_name': 'meta-llama/Meta-Llama-3-70B-Instruct',
-    'scores': False,
-    'batch_size': 8,
+        'quantization': '4bit',
+        'max_new_tokens': 4,
+        'temperature': 0.01,
+        'do_sample': False,
+        'return_dict_in_generate': True,
+        'model_family': 'llama',
+        'model_name': model_name,
+        'scores': False,
+        'batch_size': 8,
     }
 
     model_name = model_details["model_name"]
     model = LlamaFewShot(model_name, model_details)
 
     # load the data
-    benoit_pairs = load_jsonlines("data/0.train.expanded.jsonl")
-    print(f"Loaded {len(benoit_pairs)} pairs")
+    pairs = load_jsonlines(file_path)
+    print(f"Loaded {len(pairs)} pairs")
 
     # define data parameters:
-    options = ["A", "B"]
+    options = ["1", "2"]
 
     # benoit paired messages : 
-    messages_paired = [
-         [
-            {"role": "system", "content": "You are a helpful digital assistant. You will be asked to compare two items A and B on a given criteria. Reply only with A or B."},
-            {"role": "user", "content": pair['prompt']},
-        ] for pair in benoit_pairs
-    ]
+    messages_paired = [prep_prompts(pair) for pair in pairs]
+    
+    # debug script - focus on the first k batches 
+    # messages_paired = messages_paired[:64]
 
     # generate answers and scores 
     batch_size = model_details["batch_size"]
 
     batched_outputs = [] 
+    
     for index in tqdm(range(0, len(messages_paired), batch_size)):
         batched_output = generate_answer_batch_logprobs(model, messages_paired[index:index+batch_size])
-        batched_outputs.append(batched_output)
+        
         logprobs = get_logprobs(batched_output["scores"])
         preferences = get_option_preferences(model, logprobs, options)
 
-        batched_outputs.append({
-            "output": batched_output["answers"],
-            "preferences": preferences
-        })
+        # save the outputs one by one 
+        for index, preference, answer in zip(range(index, index+batch_size), preferences, batched_output["answers"]):
+            batched_outputs.append({
+                "pair_id": pairs[index]["pair_id"],
+                "output": answer,
+                "preferences": preference, 
+                "label": pairs[index]["label"],
+            })
 
-    write_jsonlines(batched_outputs, "data/0.train.expanded.output.jsonl")
+        #clear the cache in gpu
+        #cuda.empty_cache()
 
+        
+    write_jsonlines(batched_outputs, output_path)
+
+if __name__ == "__main__": 
+    parser = add_args()
+    args = parser.parse_args()
+
+    """
+    python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-0.jsonl --output output/draw-0-results.jsonl; python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-1.jsonl --output output/draw-1-results.jsonl; python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-2.jsonl --output output/draw-2-results.jsonl
+    
+    python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-0.jsonl --output output/draw-0-results_70B.jsonl --model_name "meta-llama/Meta-Llama-3-70B-Instruct"; python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-1.jsonl --output output/draw-1-results_70B.jsonl --model_name "meta-llama/Meta-Llama-3-70B-Instruct"; python debias_pairwise_comparisons.py --input ../../pairwise-comparison/experiments-2024/benoit2019_2024-08-29/intermediate/draw-2.jsonl --output output/draw-2-results_70B.jsonl --model_name "meta-llama/Meta-Llama-3-70B-Instruct"
+    
+    
+    """
+
+    compute_scores(args.input, args.output, args.model_name)
