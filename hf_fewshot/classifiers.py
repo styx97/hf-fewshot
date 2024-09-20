@@ -8,10 +8,6 @@ import os
 #from dotenv import load_dotenv
 import argparse
 
-# update HF and OPENAI_TOKENS 
-#load_dotenv("../../.env")
-
-
 model_map = {
     "mistral": MistralFewShot,
     "hf-general": HFFewShot,

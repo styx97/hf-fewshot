@@ -3,6 +3,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
 import os 
 from openai import OpenAI 
+from abc import ABC, abstractmethod
+from typing import List, Dict
 
 def labels_vocab_id_map(tokenizer, labels): 
     label_id_map = {}
@@ -38,6 +40,12 @@ def get_label_logprobs(scores, label_id_map):
     assert len(batch_logprobs) == batch_size, "Batch size mismatch"
     return batch_logprobs
 
+
+class FewShotModel(ABC):
+    @abstractmethod
+    def generate_answer(self, messages: List[Dict]) -> Dict:
+        pass
+
 class GPTFewShot:
     """
     a class the calls an openai model to generate text
@@ -53,6 +61,7 @@ class GPTFewShot:
         
         self.model = model_name 
         self.model_details = model_details
+        # if no model details are provided, set defaults
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         
 
@@ -79,7 +88,7 @@ class GPTFewShot:
             top_p = self.model_details.get("top_p", 1),
         )
 
-        return answer_object
+        return answer_object.choices[0].message.content
     
     def generate_answer_batch(self,
                               query_texts: list) -> list[str]: 
@@ -88,8 +97,7 @@ class GPTFewShot:
         answer_texts = []
 
         for message in query_texts: 
-            answer_object = self.generate_answer(message)
-            answer_text = answer_object.choices[0].message.content
+            answer_text = self.generate_answer(message)
             answer_texts.append(answer_text)
 
         return answer_texts
@@ -187,6 +195,45 @@ class LlamaFewShot(HFFewShot):
         super().__init__(model_name, model_details)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.tokenizer.pad_token = self.tokenizer.eos_token
+    
+    def generate_answer(self, query_text: list[str]) -> str:
+        """
+        Code to process a single list of conversational history and generate the answer.
+        """
+        # Applying the chat template to the list of messages (conversational history)
+        message = self.tokenizer.apply_chat_template(
+            query_text,
+            add_generation_prompt=True,
+            tokenize=False
+        )
+
+        # Tokenizing the message
+        model_input = self.tokenizer(
+            message,
+            return_tensors="pt",
+            padding=True
+        ).to("cuda")
+
+        # Define terminators for the generation
+        terminators = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+        
+        # Generating the output
+        outputs = self.model.generate(
+            **model_input,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=True,
+            eos_token_id=terminators,
+            temperature=self.temperature,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+
+        # Decoding the generated text
+        answer_text = self.tokenizer.decode(outputs[0, model_input['input_ids'].shape[-1]:], skip_special_tokens=True)
+        
+        return answer_text.strip()
         
     def generate_answer_batch(self, 
                             query_texts: list) -> list[str]: 
