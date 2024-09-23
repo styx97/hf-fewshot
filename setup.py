@@ -11,10 +11,11 @@ setup(
         ],
     },
     install_requires=[
-        "transformers>=4.40.2",
+        "transformers>=4.44.2",
         "torch>=2.3.0",
+        "optimum>=1.22.0"
         "accelerate==0.30.1",
-        "openai==1.30.1", 
+        "openai==1.30.1",
         "bitsandbytes==0.43.1",
         "sentencepiece==0.2.0",
         "autoawq==0.2.5"
