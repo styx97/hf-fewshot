@@ -1,7 +1,7 @@
 from tqdm.auto import tqdm
 import json 
 from pathlib import Path
-from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewShot
+from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewShot, GemmaFewShot
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
 import numpy as np
 import os 
@@ -12,7 +12,8 @@ model_map = {
     "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot, 
-    "gpt": GPTFewShot
+    "gpt": GPTFewShot,
+    "gemma": GemmaFewShot
 }
 # TODO: add support for other models
 

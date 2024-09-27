@@ -186,7 +186,82 @@ class HFFewShot:
         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         
         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+
+
+class GemmaFewShot(HFFewShot):
+    def __init__(self, 
+                model_name: str, 
+                model_details: dict=None):
         
+        super().__init__(model_name, model_details)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+    
+    def generate_answer(self, query_text: list[str]) -> str:
+        """
+        Code to process a single list of conversational history and generate the answer.
+        """
+        # Applying the chat template to the list of messages (conversational history)
+        message = self.tokenizer.apply_chat_template(
+            query_text,
+            add_generation_prompt=True,
+            tokenize=False
+        )
+
+        # Tokenizing the message
+        model_input = self.tokenizer(
+            message,
+            return_tensors="pt",
+            padding=True
+        ).to("cuda")
+        
+        # Generating the output
+        outputs = self.model.generate(
+            **model_input,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=True,
+            temperature=self.temperature,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+
+        # Decoding the generated text
+        answer_text = self.tokenizer.decode(outputs[0, model_input['input_ids'].shape[-1]:], skip_special_tokens=True)
+        
+        return answer_text.strip()
+        
+    def generate_answer_batch(self, 
+                            query_texts: list) -> list[str]: 
+        
+        """
+        Code to batch process multiple questions. 
+        Can be generalized to other types of query processing.
+        """
+        messages = [
+            self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            ) for messages in query_texts
+        ]
+
+        model_inputs = self.tokenizer(
+            messages,
+            return_tensors="pt", 
+            padding=True
+        ).to("cuda")
+
+        outputs = self.model.generate(
+            **model_inputs, 
+            max_new_tokens = self.max_new_tokens,
+            do_sample=True,
+            temperature=self.temperature, 
+            pad_token_id=self.tokenizer.eos_token_id,
+            output_scores=True
+        )
+
+        answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+        return answer_texts
+
+
 class LlamaFewShot(HFFewShot):
     def __init__(self, 
                 model_name: str, 
@@ -268,6 +343,7 @@ class LlamaFewShot(HFFewShot):
             eos_token_id=terminators,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
+            output_scores=True
         )
 
         answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
