@@ -40,14 +40,15 @@ def prep_prompt(targets: dict,
     """
 
     beginner_prompt = prompt["zero_shot"]
-    followup_prompts = prompt["followup"]
-
+    
     if not exemplars:
         return [{
             "role": "user", 
             "content":  beginner_prompt.format(**targets)
         }]
     
+    # if exemplars are provided, use the followup prompts (few-shot)
+    followup_prompts = prompt["followup"]
 
     messages = [] 
     messages.append({

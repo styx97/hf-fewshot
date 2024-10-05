@@ -59,6 +59,10 @@ def add_arguments():
     parser.add_argument(
         '--top_p', type=float, default=1, help="Set the top-p value"
     )
+
+    parser.add_argument(
+        '--quantization', type=str, default="4bit", help="Set quantization"
+    )
     
     return parser
 
@@ -71,7 +75,8 @@ def main():
         "model_name": args.name,
         "temperature": args.temperature,
         "max_new_tokens": args.max_new_tokens,
-        "top_p": args.top_p
+        "top_p": args.top_p, 
+        "quantization": args.quantization,
     }
 
     if 'gpt' in args.name:

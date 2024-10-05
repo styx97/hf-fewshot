@@ -1,21 +1,21 @@
 from tqdm.auto import tqdm
 import json 
 from pathlib import Path
-from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewShot, GemmaFewShot
+from hf_fewshot.models import MistralFewShot, HFFewShot, LlamaFewShot, GPTFewShot, GemmaFewShot, display_gpu_status, get_unused_gpu_memory
 from hf_fewshot.prompting_utils import prep_prompt, load_yaml, load_jsonlines, load_json
 import numpy as np
 import os 
 #from dotenv import load_dotenv
 import argparse
+import torch
 
 model_map = {
     "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot, 
-    "gpt": GPTFewShot,
+    "gpt": GPTFewShot, 
     "gemma": GemmaFewShot
 }
-# TODO: add support for other models
 
 def few_shot_classifier(config_file: str):
 
@@ -23,19 +23,25 @@ def few_shot_classifier(config_file: str):
     model_family = config["model_details"]["model_family"]
     model_name = config["model_details"]["model_name"]
     
-    exemplars_path = config["exemplars"]["path"]
-    
-    exemplars = load_jsonlines(exemplars_path) if exemplars_path !='None' else None
-    
-    shuffle_exemplars = config["exemplars"]["shuffle"]
-    num_exemplars = config["exemplars"]["num_exemplars"]
-
     prompts = load_json(config["prompts"]["path"])
     prompt = prompts[config["prompts"]["prompt_name"]]
     prompt_name = config["prompts"]["prompt_name"]
     batch_size = config["model_details"]["batch_size"]
     
-    if config["output"]["output_file"]: 
+    if "exemplars" in config:
+        exemplars_path = config["exemplars"]["path"]
+        exemplars = load_jsonlines(exemplars_path) if exemplars_path !='None' else None
+        
+        shuffle_exemplars = config["exemplars"]["shuffle"]
+        num_exemplars = config["exemplars"]["num_exemplars"]
+
+    else:
+        exemplars = None
+        shuffle_exemplars = False
+        num_exemplars = None
+
+    
+    if "output_file" in config["output"]: 
         outfile = Path(config["output"]["output_dir"]) / config["output"]["output_file"]
     else: 
         outfile = Path(config['output']['output_dir']) / f"{config['output']['task_name']}_on_{config['dataset']['dataset_name']}_{model_name}.jsonl"
@@ -57,7 +63,7 @@ def few_shot_classifier(config_file: str):
 
     """
     SANITY CHECK: input variables in the prompt + output variable should be 
-    the same as the number of variables in the exemplar 
+    the same as the number of variables in the exemplar if exemplars are provided
     """
     all_vars = set(input_vars + [output_var])
 
@@ -100,6 +106,15 @@ def few_shot_classifier(config_file: str):
 
     print(f"Start index is: {start_index}")    
 
+    # initial gpu state 
+    if model_family in ["gpt"]:
+        api_model = True 
+    else:
+        api_model = False
+
+    if not api_model:
+        display_gpu_status()
+
     # model loading 
     model_details = config["model_details"]
     model = model_map[model_family](model_name=model_name,
@@ -108,31 +123,72 @@ def few_shot_classifier(config_file: str):
     
     print(f"Generated {len(query_texts)} input prompts with {prompt_name} for {model_name}")
     
-    pbar = tqdm(total=len(query_texts) - start_index, desc="Generating responses")
+    pbar = tqdm(total=len(query_texts[start_index:]), desc='Processing')
+
+    
+    if not api_model:
+        print("Model Loaded on GPU .. ")
+        display_gpu_status()
+
+    print("Starting inference loop")
 
     with open(outfile, "a+") as f:
         print("Loading outfile")
-        # If not starting from zero, first add a newline 
-        
+        # If not starting from zero, first add a newline
         print("Writing responses to ", outfile)
-        for i in range(start_index, len(query_texts), batch_size):
-            pbar.update(batch_size)
-            batch_query_texts = query_texts[i:i+batch_size]
-            ids = all_id_values[i:i+batch_size]
+        i = start_index
+        while i < len(query_texts):
+            try:
+                batch_query_texts = query_texts[i:i + batch_size]
+                ids = all_id_values[i:i + batch_size]
 
-            if model_details["scores"]: 
-                batch_responses, scores = model.generate_answer_batch_scores(batch_query_texts)
-                assert len(batch_responses) == len(scores), "Batch size mismatch"
-                for id_, response, score in zip(ids, batch_responses, scores):
-                    f.write(json.dumps({id_key: id_, "response": response, "scores": score}))
-                    f.write('\n')
+                if model_details["scores"]:
+                    batch_responses, scores = model.generate_answer_batch_scores(batch_query_texts)
+                    assert len(batch_responses) == len(scores), "Batch size mismatch"
+                    for id_, response, score in zip(ids, batch_responses, scores):
+                        f.write(json.dumps({id_key: id_, "response": response, "scores": score}))
+                        f.write('\n')
 
-            else:
-                batch_responses = model.generate_answer_batch(batch_query_texts)
-                for id_, response in zip(ids, batch_responses):
-                    f.write(json.dumps({id_key: id_, "response": response}))
-                    f.write('\n')
-    
+                    
+                else:
+                    # Check memory usage before training/inference loop
+                    batch_responses = model.generate_answer_batch(batch_query_texts)
+                    for id_, response in zip(ids, batch_responses):
+                        f.write(json.dumps({id_key: id_, "response": response}))
+                        f.write('\n')
+
+                    # If successful, move to the next batch
+                    i += batch_size
+                    pbar.update(batch_size)
+                        
+                    if api_model:
+                        continue 
+
+                    #display_gpu_status()
+                    unused_gpu_mem = get_unused_gpu_memory()
+                    print("Unused GPU memory: ", unused_gpu_mem)
+                    
+                    # if more than 50% of the GPU memory is unused, increase the batch size by 2
+                    if unused_gpu_mem > 50:
+                        batch_size += 2
+                        print(f"Increasing batch size to {batch_size}")
+                        torch.cuda.empty_cache()
+                        
+                
+
+            except torch.cuda.OutOfMemoryError as e:
+                print("Out of memory error. Reducing batch size")
+                print(e)
+                display_gpu_status()
+
+                # reduce the batch size by 2 
+                batch_size = max(1, batch_size - 2)
+                print(f"Reducing batch size to {batch_size}")
+                torch.cuda.empty_cache()
+
+            if not api_model:
+                torch.cuda.empty_cache()
+
     pbar.close()
 
 

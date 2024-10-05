@@ -18,6 +18,7 @@ setup(
         "openai==1.30.1",
         "bitsandbytes==0.43.1",
         "sentencepiece==0.2.0",
-        "autoawq==0.2.5"
+        "autoawq==0.2.5", 
+        "pynvml==11.5.3"
     ]
 )

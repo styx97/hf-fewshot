@@ -5,6 +5,81 @@ import os
 from openai import OpenAI 
 from abc import ABC, abstractmethod
 from typing import List, Dict
+import pynvml
+
+
+def get_unused_gpu_memory():
+    """
+    Get the amount of unused GPU memory.
+    Returns:
+        int: Unused GPU memory in MB.
+    """
+    pynvml.nvmlInit()
+    device_count = pynvml.nvmlDeviceGetCount()
+    total_unused_memory = 0
+    total_available_memory  = 0
+    
+    for i in range(device_count):
+        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        total_memory = info.total // 1024 ** 2  # Convert bytes to MB
+        used_memory = info.used // 1024 ** 2   # Convert bytes to MB
+        unused_memory = total_memory - used_memory
+        total_unused_memory += unused_memory
+        total_available_memory += total_memory
+        
+    pynvml.nvmlShutdown()
+    return round((total_unused_memory / total_available_memory) * 100, 5)
+
+
+def display_gpu_status():
+    # Initialize NVML
+    pynvml.nvmlInit()
+    
+    try:
+        # Get the number of GPUs in the system
+        device_count = pynvml.nvmlDeviceGetCount()
+        
+        if device_count == 0:
+            print("No GPUs found on this machine.")
+            return
+        
+        # Define headers for the table
+        headers = ["GPU ID", "Name", "Memory Usage", "GPU Utilization"]
+        header_line = f"{headers[0]:<10} {headers[1]:<20} {headers[2]:<30} {headers[3]:<20}"
+        
+        # Print table header
+        print(header_line)
+        print("=" * len(header_line))
+        
+        for i in range(device_count):
+            # Get handle for each GPU
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            
+            # Retrieve GPU name
+            gpu_name = pynvml.nvmlDeviceGetName(handle)
+            
+            # Retrieve memory information
+            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            total_memory = mem_info.total // 1024 ** 2  # Convert bytes to MB
+            used_memory = mem_info.used // 1024 ** 2   # Convert bytes to MB
+            memory_util_percent = (mem_info.used / mem_info.total) * 100 if mem_info.total > 0 else 0
+            
+            # Retrieve utilization rates
+            utilization_rates = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            gpu_util = utilization_rates.gpu
+            
+            # Construct GPU status line
+            memory_usage = f"{used_memory} MB / {total_memory} MB ({memory_util_percent:.2f}%)"
+            util = f"{gpu_util:.2f}%"
+            line = f"{i:<10} {gpu_name:<20} {memory_usage:<30} {util:<20}"
+
+            # Print each line of GPU status
+            print(line)
+    
+    finally:
+        # Make sure NVML is always shutdown
+        pynvml.nvmlShutdown()
 
 def labels_vocab_id_map(tokenizer, labels): 
     label_id_map = {}
@@ -144,6 +219,7 @@ class HFFewShot:
                 device_map="auto", 
                 torch_dtype="auto"
             ).eval()
+            
         else: 
             print("Quantization is set to ", model_details["quantization"])
             # write the quantization logic 
@@ -167,15 +243,15 @@ class HFFewShot:
                     quantization_config=bnb_config,
                     device_map="auto"
                 ).eval()
+
+        # show how much gpu memory is being used per gpu 
+        print("Model loaded")
+        display_gpu_status()
+
         
         self.max_new_tokens = model_details.get("max_new_tokens", 10)
         self.temperature = model_details.get("temperature", 0.01)
 
-
-    def debug(self): 
-        while True: 
-            query_text = input("Enter prompt string: ")
-            print(self.generate_answer(query_text))
 
     def generate_answer_batch(self, 
                         query_texts: list) -> list[str]: 
