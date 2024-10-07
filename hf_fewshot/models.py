@@ -101,6 +101,29 @@ class GPTFewShot:
             answer_texts.append(answer_text)
 
         return answer_texts
+    
+    def generate_answer_batch_scores(self, query_texts: list) -> list[str]: 
+        answer_texts = []
+        top_logprobs = []
+        for message in query_texts: 
+            answer_object = self.client.chat.completions.create(
+                model=self.model, 
+                messages=message,
+                temperature = self.model_details['temperature'], 
+                max_tokens = self.model_details['max_new_tokens'], 
+                # get top_p if provided 
+                top_p = self.model_details.get("top_p", 1),
+                logprobs=True,
+                top_logprobs=5
+                
+            )
+            answer_text = answer_object.choices[0].message.content
+            # This is getting the top n logprobs for the first token!
+
+            label_logprobs = answer_object.choices[0].logprobs.content[0]
+            top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
+            answer_texts.append(answer_text)
+        return answer_texts, top_logprobs
             
 
 class HFFewShot:

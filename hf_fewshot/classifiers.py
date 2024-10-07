@@ -32,6 +32,7 @@ def few_shot_classifier(config_file: str):
 
     prompts = load_json(config["prompts"]["path"])
     prompt = prompts[config["prompts"]["prompt_name"]]
+    prompt_name = config["prompts"]["prompt_name"]
     batch_size = config["model_details"]["batch_size"]
     
     if config["output"]["output_file"]: 
@@ -105,7 +106,7 @@ def few_shot_classifier(config_file: str):
                                 model_details=model_details)
     print("Model loaded")
     
-    print(f"Generated {len(query_texts)} input prompts for {model_name}")
+    print(f"Generated {len(query_texts)} input prompts with {prompt_name} for {model_name}")
     
     pbar = tqdm(total=len(query_texts) - start_index, desc="Generating responses")
 
