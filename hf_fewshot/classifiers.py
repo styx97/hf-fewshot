@@ -106,6 +106,8 @@ def prepare_initial_data(config: dict,
 def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model):
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
+
+    print("Writing responses to: ", outfile)
     
     with open(outfile, "a+") as f:
         i = 0
