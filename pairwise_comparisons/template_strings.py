@@ -1,0 +1,2 @@
+benoit_pairwise_prompt = "Which of the following two texts is easier to understand?\n\n**Text A**: {textA}\n\n**Text B**: {textB}\n\nRespond only with A or B: "
+benoit_pointwise_prompt = "On a scale of 1 to 10, where 1 means impossibly hard to understand and 10 means universally understandeable, how easy to understand is the following text?\n\n**Text**: {text}\n\n**Response** :"
