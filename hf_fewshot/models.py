@@ -121,6 +121,10 @@ class FewShotModel(ABC):
     def generate_answer(self, messages: List[Dict]) -> Dict:
         pass
 
+    @abstractmethod
+    def generate_answer_batch(self, query_texts: List[str]) -> List[str]:
+        pass
+
 class GPTFewShot:
     """
     a class the calls an openai model to generate text

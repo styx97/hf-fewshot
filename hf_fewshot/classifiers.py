@@ -20,7 +20,8 @@ from hf_fewshot.prompting_utils import (
     load_yaml,
     load_jsonlines,
     load_json,
-    write_jsonlines
+    write_jsonlines, 
+    read_md
 )
 
 model_map = {
@@ -36,10 +37,36 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
     """
     Load the prompt and exemplars from the config file 
     If no exemplars are provided, return None
-    """
 
-    prompts = load_json(config["prompts"]["path"])
-    prompt = prompts[config["prompts"]["prompt_name"]]
+    Accepts two ways of prompt input:
+    1. A json file that contains the prompt with the keys "zero_shot" and "followup"
+    2. A markdown directory that contains the prompt in the files "zero_shot.md" and "followup.md"
+    """
+    prompt_details = config["prompt_details"]
+    prompt_path = Path(prompt_details["path"])
+
+    if prompt_details['input_type'] == "json": 
+        prompts = load_json(prompt_path)
+        prompt = prompts[config["prompt_details"]["prompt_name"]]
+
+    elif prompt_details['input_type'] == "md":
+        # in this case, read the md files and return the content
+        # filepath/zero_shot.md and filepath/followup.md
+        zero_shot_filepath = prompt_path / "zero_shot.md"
+        # first, verify that the files exist
+        assert zero_shot_filepath.is_file(), f"Zero-shot prompt file not found at {zero_shot_filepath}"
+        zero_shot = read_md(zero_shot_filepath)
+        
+        if config["exemplars"]["use_exemplars"]:
+            followup_filepath = prompt_path / "followup.md"
+            assert followup_filepath.is_file(), f"Follow-up prompt file not found at {followup_filepath}"
+            followup = read_md(followup_filepath)
+        else: 
+            followup = None
+
+        prompt = {"zero_shot": zero_shot,
+                 "followup": followup}
+        
     if "exemplars" in config:
         exemplars_path = config["exemplars"]["path"]
         exemplars = load_jsonlines(exemplars_path) if exemplars_path != 'None' else None
@@ -48,6 +75,7 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
             np.random.shuffle(exemplars)
         num_exemplars = config["exemplars"]["num_exemplars"]
         return prompt, exemplars[:num_exemplars]
+    
     return prompt, None
 
 
@@ -79,8 +107,8 @@ def prepare_initial_data(config: dict,
 
     dataset = load_jsonlines(config["dataset"]["path"])
     id_key = config["dataset"]["id_key"]
-    input_vars = config["prompts"]["input_vars"]
-    output_var = config["prompts"]["output_var"]
+    input_vars = config["prompt_details"]["input_vars"]
+    output_var = config["prompt_details"]["output_var"]
 
     assert id_key in dataset[0].keys(), f"ID key {id_key} not found in dataset"
     assert set(input_vars).issubset(set(dataset[0].keys())), \

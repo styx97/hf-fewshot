@@ -2,19 +2,24 @@
 
 # Main header
 exemplars:
+    use_exemplars: True
     path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_exemplars.jsonl
     num_exemplars: 2
     shuffle: False
 
-prompts: 
-    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
+prompt_details: 
+    path: /fs/clip-political/rupak/hf-fewshot/example_task/md_prompt_example
     prompt_name: question_answering_prompt
     output_var: answer
     labels:  # keep this empty for open labels
     input_vars: [question]
+    input_type: md
+    # input_type: json
+    # path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
+
     
 model_details:
-    model_name: gpt-4-turbo
+    model_name: gpt-3.5-turbo
     model_family: gpt
     scores: False
     batch_size: 8

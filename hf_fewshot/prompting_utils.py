@@ -27,9 +27,14 @@ def write_jsonlines(data, filepath):
             s = json.dumps(line)
             f.write('\n'*(index>0) + s)
 
+def read_md(filepath: str) -> str: 
+    with open(filepath, 'r') as f: 
+        content = f.read()
+    return content.strip()
+
 def prep_prompt(targets: dict,
                 output_var: str,
-                prompt: dict, 
+                prompt: dict,
                 exemplars: list[dict]=None ) -> list:
     """
     Takes a prompt, an exemplar path that is a jsonlines file, 
@@ -48,7 +53,7 @@ def prep_prompt(targets: dict,
         }]
     
     # if exemplars are provided, use the followup prompts (few-shot)
-    followup_prompts = prompt["followup"]
+    followup_prompt = prompt["followup"]
 
     messages = [] 
     messages.append({
@@ -64,7 +69,7 @@ def prep_prompt(targets: dict,
     for exemplar in exemplars[1:]:
         messages.append({
             "role": "user", 
-            "content": followup_prompts.format(**exemplar)
+            "content": followup_prompt.format(**exemplar)
         })
         messages.append({
             "role": "assistant", 
@@ -74,7 +79,7 @@ def prep_prompt(targets: dict,
     # finally, pass the target document
     messages.append({
         "role": "user", 
-        "content": followup_prompts.format(**targets)
+        "content": followup_prompt.format(**targets)
     })
     
     return messages
