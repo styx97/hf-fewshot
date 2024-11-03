@@ -67,7 +67,7 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
         prompt = {"zero_shot": zero_shot,
                  "followup": followup}
         
-    if "exemplars" in config:
+    if config['exemplars']['use_exemplars']:
         exemplars_path = config["exemplars"]["path"]
         exemplars = load_jsonlines(exemplars_path) if exemplars_path != 'None' else None
         if config["exemplars"]["shuffle"]:
