@@ -5,7 +5,8 @@ exemplars:
     use_exemplars: True
     path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_exemplars.jsonl
     num_exemplars: 2
-    shuffle: False
+    shuffle: True
+    seed: 42
 
 prompt_details: 
     path: /fs/clip-political/rupak/hf-fewshot/example_task/md_prompt_example

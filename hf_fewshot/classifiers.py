@@ -71,7 +71,7 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
         exemplars_path = config["exemplars"]["path"]
         exemplars = load_jsonlines(exemplars_path) if exemplars_path != 'None' else None
         if config["exemplars"]["shuffle"]:
-            np.random.seed(42)
+            np.random.seed(config["exemplars"]["seed"])
             np.random.shuffle(exemplars)
         num_exemplars = config["exemplars"]["num_exemplars"]
         return prompt, exemplars[:num_exemplars]
