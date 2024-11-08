@@ -12,7 +12,8 @@ from hf_fewshot.models import (
     GPTFewShot,
     GemmaFewShot,
     display_gpu_status,
-    get_unused_gpu_memory
+    get_unused_gpu_memory, 
+    get_logsoftmax
 )
 
 from hf_fewshot.prompting_utils import (
@@ -31,6 +32,52 @@ model_map = {
     "gpt": GPTFewShot,
     "gemma": GemmaFewShot
 }
+
+def get_option_preferences(model: LlamaFewShot, 
+                           logprobs: np.array, 
+                           options: list[str]) -> np.array: 
+    """
+    Given the logprobs of the options, find the model preferences for each option
+    """
+
+    option_token_dict = {option: model.tokenizer.encode(option)[1] for option in options}
+    
+    preferences = []
+    num_examples = logprobs.shape[0]
+
+    for index in range(num_examples):
+        option_logprobs  = {option: logprobs[index, 0, option_token_dict[option]] 
+                            for option in options}
+        
+        # convert logprobs to probabilities 
+        option_probs = {option: float(np.exp(logprob)) for option, logprob in option_logprobs.items()}
+
+        preferences.append(option_probs)
+
+    return preferences
+
+
+def get_logprobs(scores): 
+    """
+    This function takes raw logit scores and returns logprobs for each output label
+    
+    Note: Changes shape from (max_new_tokens, batch_size, vocab_size) -> (batch_size, max_new_tokens, vocab_size)
+    """
+
+    # find out the batch size 
+    batch_size = scores[0].shape[0]
+    logprobs = [] 
+    for index in range(batch_size):
+        curr_logprobs = []
+        for token_output in scores: 
+            token_output_logprobs = get_logsoftmax(token_output[index]) 
+            curr_logprobs.append(token_output_logprobs[0].detach().cpu().numpy())
+        
+        logprobs.append(curr_logprobs)
+    
+    return np.array(logprobs)
+
+
 
 
 def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
@@ -117,8 +164,8 @@ def prepare_initial_data(config: dict,
     if exemplars:
         all_vars = set(input_vars + [output_var])
         exemplar_vars = set(exemplars[0].keys())
-        assert all_vars == exemplar_vars, \
-            (f"Variables in the prompt: {all_vars} are not the same as the variables in the exemplar: {exemplar_vars}")
+        assert all_vars.issubset(exemplar_vars), \
+            (f"Variables in the prompt: {all_vars} are not a subset of the variables in the exemplar: {exemplar_vars}")
 
     existing_data = load_jsonlines(outfile)
     if existing_data:
@@ -144,9 +191,23 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                batch_responses = model.generate_answer_batch(batch_query_texts)
-                for id_, response in zip(ids, batch_responses):
-                    f.write(json.dumps({id_key: id_, "response": response}) + '\n')
+                
+                # batch_responses = model.generate_answer_batch(batch_query_texts)
+                # for id_, response in zip(ids, batch_responses):
+                #     f.write(json.dumps({id_key: id_, "response": response}) + '\n')
+
+                batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+                logprobs = get_logprobs(batched_output["scores"])
+                preferences = get_option_preferences(model, logprobs, ["1", "2"])
+
+                for pair_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
+                    output = {
+                        id_key: pair_id,
+                        "output": answer,
+                        "preferences": preference,
+                    }
+                    f.write(json.dumps(output) + "\n")
+
 
                 i += batch_size
                 pbar.update(batch_size)
@@ -226,11 +287,14 @@ def few_shot_classifier(config_file: str):
 def get_args():
     parser = argparse.ArgumentParser(description="Run few-shot classification on a dataset")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file")
-
     return parser
-
 
 def main():
     parser = get_args()
     args = parser.parse_args()
     few_shot_classifier(args.config)
+
+
+
+if __name__ == "__main__": 
+    main()

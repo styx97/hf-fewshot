@@ -413,6 +413,53 @@ class LlamaFewShot(HFFewShot):
         
         return answer_text.strip()
         
+    def generate_answer_batch_logprobs(self, 
+                        query_texts: list) -> list[str]: 
+    
+        """
+        Code to batch process multiple questions. 
+        Can be generalized to other types of query processing.
+        """
+        messages = [
+            self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            ) for messages in query_texts
+        ]
+
+        model_inputs = self.tokenizer(
+            messages,
+            return_tensors="pt", 
+            padding=True
+        ).to("cuda")
+
+        terminators = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+        
+        outputs = self.model.generate(
+            **model_inputs, 
+            max_new_tokens = 4,
+            do_sample=False,
+            #temperature=0.01,
+            eos_token_id=terminators,
+            return_dict_in_generate=True, 
+            pad_token_id=self.tokenizer.eos_token_id,
+            output_scores=True
+        )
+
+
+        answer_texts = self.tokenizer.batch_decode(outputs.sequences[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+
+        scores = outputs.scores
+        
+        # return the scores and answers
+        return {"answers": answer_texts,
+                "scores": scores}
+
+
     def generate_answer_batch(self, 
                             query_texts: list) -> list[str]: 
         
@@ -450,6 +497,8 @@ class LlamaFewShot(HFFewShot):
         )
 
         answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+
+
         return answer_texts
 
 class MistralFewShot:
