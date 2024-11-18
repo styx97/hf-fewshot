@@ -197,8 +197,11 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
                 #     f.write(json.dumps({id_key: id_, "response": response}) + '\n')
 
                 batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+
                 logprobs = get_logprobs(batched_output["scores"])
                 preferences = get_option_preferences(model, logprobs, ["1", "2"])
+                
+                #import ipdb; ipdb.set_trace()
 
                 for pair_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
                     output = {
@@ -267,7 +270,10 @@ def few_shot_classifier(config_file: str):
     api_model = model_family == "gpt"
 
     if not api_model:
-        display_gpu_status()
+        try:
+            display_gpu_status()
+        except:
+            print("could not call display_gpu_status")
 
     model_class = model_map[model_family]
     model = model_class(model_name=model_name, model_details=model_params)

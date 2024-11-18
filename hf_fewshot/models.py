@@ -6,7 +6,7 @@ from openai import OpenAI
 from abc import ABC, abstractmethod
 from typing import List, Dict
 import pynvml
-
+from dotenv import load_dotenv
 
 def get_unused_gpu_memory():
     """
@@ -97,23 +97,15 @@ def get_logsoftmax(x):
     m = torch.nn.LogSoftmax(dim=1)
     return m(x.view(1, -1))
 
-def get_label_logprobs(scores, label_id_map):
-    batch_size = scores[0].shape[0]
-    batch_logprobs = [] 
-    for index in range(batch_size): 
-        # look at the first output token of the generation 
-        # and get the logprob of the label
-        relevant_position = scores[0]
-        token_output_logprobs = get_logsoftmax(relevant_position[index])
-        numpy_formatted = token_output_logprobs[0].detach().cpu().numpy()
-        label_logprobs=  {
-            k:float(numpy_formatted[v]) for k, v in label_id_map.items()
-        }
+def get_logsoftmax1(logits_T:torch.FloatTensor, negative:bool=False):
+  """
+  standard log likelihood for language modeling
+  """
+  log_probs_T = (logits_T.log_softmax(dim=-1)) ## log probs 
 
-        batch_logprobs.append(label_logprobs)
-
-    assert len(batch_logprobs) == batch_size, "Batch size mismatch"
-    return batch_logprobs
+  if negative: ## turn into negative loglikelihood loss
+    log_probs_T = -log_probs_T
+  return log_probs_T
 
 
 class FewShotModel(ABC):
@@ -455,6 +447,8 @@ class LlamaFewShot(HFFewShot):
 
         scores = outputs.scores
         
+        #import ipdb; ipdb.set_trace()
+
         # return the scores and answers
         return {"answers": answer_texts,
                 "scores": scores}
