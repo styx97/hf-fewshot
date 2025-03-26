@@ -28,8 +28,19 @@ class ChatAgent:
             user_input = self.user_input_terminal()
             if user_input.lower() == 'exit':
                 break
+
+            if user_input.lower() == 'reset':
+                self.clear_context()
+                print(blue("Context cleared."))
+                continue
+
             response = self.get_response(user_input)
             print(blue(f"Assistant: {response}"))
+
+    # add an option to clear context 
+    def clear_context(self):
+        self.history = []
+    
 
     def chat_programmatic(self, input_function: callable):
         """

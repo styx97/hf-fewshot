@@ -117,7 +117,7 @@ def prepare_initial_data(config: dict,
     if exemplars:
         all_vars = set(input_vars + [output_var])
         exemplar_vars = set(exemplars[0].keys())
-        assert all_vars == exemplar_vars, \
+        assert set(all_vars).issubset(exemplar_vars), \
             (f"Variables in the prompt: {all_vars} are not the same as the variables in the exemplar: {exemplar_vars}")
 
     existing_data = load_jsonlines(outfile)
@@ -132,7 +132,15 @@ def prepare_initial_data(config: dict,
     return query_texts, dataset, id_key
 
 
-def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model):
+def run_inference(model,
+                query_texts,
+                batch_size,
+                outfile, 
+                id_values, 
+                id_key, 
+                api_model, 
+                dynamic_batching):
+
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
 
@@ -157,7 +165,8 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
                 unused_gpu_mem = get_unused_gpu_memory()
                 print("Unused GPU memory: ", unused_gpu_mem)
 
-                if unused_gpu_mem > 40:
+                # if dynamic batching is turned on, increase batch size by 2 
+                if unused_gpu_mem > 40 and dynamic_batching:
                     batch_size += 2
                     print(f"Increasing batch size to {batch_size}")
                     torch.cuda.empty_cache()
@@ -166,6 +175,10 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
                 print("Out of memory error. Reducing batch size")
                 print(e)
                 display_gpu_status()
+                if batch_size == 1: 
+                    print("Batch size of 1 too large for GPU. Aborting")
+
+
 
                 batch_size = max(1, batch_size - 2)
                 print(f"Reducing batch size to {batch_size}")
@@ -195,6 +208,7 @@ def few_shot_classifier(config_file: str):
     config = load_yaml(config_file)
     model_family = config["model_details"]["model_family"]
     model_name = config["model_details"]["model_name"]
+    dynamic_batching = config["model_details"].get("dynamic_batching", False)
 
     prompt, exemplars = load_prompts_and_exemplars(config)
     outfile = prepare_output_file(config)
@@ -219,7 +233,7 @@ def few_shot_classifier(config_file: str):
     batch_size = model_params.get("batch_size", 1)
     id_values = [d[id_key] for d in dataset]
 
-    run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model)
+    run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model, dynamic_batching)
     reorder_output(outfile, config["dataset"]["path"], id_key)
 
 
