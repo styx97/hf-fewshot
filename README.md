@@ -8,33 +8,26 @@ This is meant to be as lightweight as possible, and is not meant to be a full-fl
 ---
 
 #### Files required : 
-For running a task, 4 additional files are required. [example_task](example_task) contains the setup for running a simple question answering task. A brief description of the 4 files is as follows :
 
-- A `prompt.json` should contain prompts for generation. Each prompt should be in the following format 
+For running a task, five additional files are required. [example_tasks](example_tasks) contains the setup for three tasks: Question answering, pairwise comparison, and scoring.
 
-    ```python
-    {
-        "prompt_name": {
-            #zero_shot: The initial prompt along with the input variables. In case of zero shot classification, this is the only prompt that will be needed. Example :
-            "zero_shot": "You are an expert in US history. Given a question about a US political figurem, answer it with a short paragraph.\n\nQUESTION: {question}\nANSWER: ",
+A brief description of the five required files based on [Question answering](example_tasks/question_answering/) is as follows :
 
-            # followup: A followup prompt that fixes format for exemplars. Example: 
-            "followup": "QUESTION: {question}\nANSWER: ",
-        }
-    }
+
+- A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_qna_config.yml](configs/example_qna_config.yml) for a sample file.
+
+- A `zero_shot.md` should contain the prompt for generation.
+
+    ```markdown
+    You are an expert in US history. Given a question about a US political figurem, answer it with a short paragraph.
+    
+    QUESTION: {question}
+    ````
+- A `followup.md` should contain the format for few-shot examplars (optional for few-shot in-context learning):
+    ```markdown
+    QUESTION: {question}
+    ANSWER: 
     ```
-    For a more involved example of a prompt, see [examples/sample_prompt.json](example_task/sample_prompt.json). 
-
-- An `exemplars.jsonl` should contain exemplars in jsonlines format with the input and output variables. 
-
-    ```python
-    {"input": "Who was the first president of the United States?","output": "George Washington"}
-    ...
-    ```
-
-    See [examples/sample_exemplars.jsonl](example_task/sample_exemplars.jsonl) for a sample file.
-
-
 - A `dataset.jsonl` should contain the dataset in jsonlines format with the input (and optionally output variables). NOTE: Each dataset item must have a key, to be specified under `dataset` -> `id_key` in `config.json`
 
     ```python
@@ -43,8 +36,14 @@ For running a task, 4 additional files are required. [example_task](example_task
     ```
 
     See [examples/sample_dataset.jsonl](example_task/sample_dataset.jsonl) for a sample file.
+- An `exemplars.jsonl` should contain exemplars in jsonlines format with the input and output variables. 
 
-- A `config.yml` file should contain various hyperparameters and data paths in a yaml parsable format. See [configs/example_config.yml](configs/example_config.yml) for a sample file.
+    ```python
+    {"input": "Who was the first president of the United States?","output": "George Washington"}
+    ...
+    ```
+
+    See [examples/sample_exemplars.jsonl](example_task/sample_exemplars.jsonl) for a sample file.
 
 
 See the [create_task](./create_task) subdirectory for convenient code that will create these files automatically for you from CSV and text files, which you may find more convenient.
@@ -79,7 +78,7 @@ pip install -e .
 To run fewshot prompting, run the following command : 
 
 ```bash
-hf_fewshot --config configs/example_config.yml
+hf_fewshot --config configs/example_qna_config.yml
 ```
 
 If `output_file` is specified in the config, it will be saved to that location. Otherwise, a file will be automatically generated in that directory prior to saving.
