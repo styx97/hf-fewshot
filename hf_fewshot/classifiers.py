@@ -40,17 +40,24 @@ def get_option_preferences(model: LlamaFewShot,
     Given the logprobs of the options, find the model preferences for each option
     """
 
-    option_token_dict = {option: model.tokenizer.encode(option)[1] for option in options}
+    # NOTE: keep all tokens for multi-token options
+    option_token_dict = {
+        option: model.tokenizer.encode(option, add_special_tokens=False) 
+        for option in options
+    }
     
     preferences = []
     num_examples = logprobs.shape[0]
 
     for index in range(num_examples):
-        option_logprobs  = {option: logprobs[index, 0, option_token_dict[option]] 
-                            for option in options}
-        
+        option_logprobs  = {
+            option: logprobs[index, 0, option_token_dict[option]] 
+            for option in options
+        }
         # convert logprobs to probabilities 
-        option_probs = {option: float(np.exp(logprob)) for option, logprob in option_logprobs.items()}
+
+        # NOTE: consider joint probability for multi-token options
+        option_probs = {option: np.exp(logprob.sum()) for option, logprob in option_logprobs.items()}
 
         preferences.append(option_probs)
 
@@ -180,6 +187,10 @@ def prepare_initial_data(config: dict,
 
 
 def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model):
+    has_labels = hasattr(model, "label_id_map") and model.label_id_map 
+    if not has_labels:
+        print("Model does not have labels. Running inference without obtaining preferences")
+    
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
 
@@ -192,14 +203,10 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
                 
-                # batch_responses = model.generate_answer_batch(batch_query_texts)
-                # for id_, response in zip(ids, batch_responses):
-                #     f.write(json.dumps({id_key: id_, "response": response}) + '\n')
-
                 batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
 
                 logprobs = get_logprobs(batched_output["scores"])
-                preferences = get_option_preferences(model, logprobs, ["1", "2"])
+                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else {}
                 
                 #import ipdb; ipdb.set_trace()
 
@@ -210,7 +217,6 @@ def run_inference(model, query_texts, batch_size, outfile, id_values, id_key, ap
                         "preferences": preference,
                     }
                     f.write(json.dumps(output) + "\n")
-
 
                 i += batch_size
                 pbar.update(batch_size)
@@ -276,7 +282,20 @@ def few_shot_classifier(config_file: str):
             print("could not call display_gpu_status")
 
     model_class = model_map[model_family]
-    model = model_class(model_name=model_name, model_details=model_params)
+    labels = config['prompt_details']['labels'] if 'labels' in config['prompt_details'] else None
+    if labels:
+        # processing for range value specified as a string like "0-4"
+        if isinstance(labels, str):
+            labels = dict(zip(["low", "high"], labels.split("-")))
+        # processing for range value specified as a dict like {"low": 0, "high": 4}
+        if isinstance(labels, dict):
+            labels = list(map(str, list(range(labels["low"], labels["high"] + 1))))
+        assert isinstance(labels, list), "Labels should be a list of strings"
+        assert all(isinstance(label, (str, int)) for label in labels), "Labels should be a list of integers or strings"
+        # processing for list of ints (require strings for encoding)
+        if isinstance(labels[0], int):
+            labels = list(map(str, labels))
+    model = model_class(model_name=model_name, model_details=model_params, labels=labels)
     print("Model loaded")
 
     if not api_model:

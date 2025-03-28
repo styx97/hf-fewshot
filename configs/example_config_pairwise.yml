@@ -1,0 +1,36 @@
+# FILEPATH: hf_fewshot/configs/example_pairwise_config.yaml
+
+# Main header
+exemplars:
+    use_exemplars: True
+    path: ../example_tasks/pairwise_comparison/exemplars.jsonl
+    num_exemplars: 1
+    shuffle: False
+
+prompt_details: 
+    path: ../example_tasks/pairwise_comparison/zero_shot
+    input_type: md
+    prompt_name: pairwise_comparison_prompt
+    output_var: response
+    labels: ["1", "2"]
+    input_vars: ["text1", "text2"]
+    
+model_details:
+    model_name: gpt-3.5-turbo
+    model_family: gpt
+    scores: False
+    batch_size: 8
+    max_new_tokens: 10
+    temperature: 0.01
+    
+# The dataset should be a jsonlines file with keys that are of the following type 
+dataset:
+    # the unique_id of each example
+    dataset_name: test-pairwise-dataset
+    id_key: id
+    path: ../example_tasks/pairwise_comparison/dataset.jsonl
+    
+output:
+    output_dir: ../outputs
+    output_file: sample_pairwise_output.jsonl
+    task_name: simple-pairwise

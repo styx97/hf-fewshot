@@ -81,23 +81,21 @@ def display_gpu_status():
         # Make sure NVML is always shutdown
         pynvml.nvmlShutdown()
 
-def labels_vocab_id_map(tokenizer, labels): 
+def labels_vocab_id_map(tokenizer, labels: list[str]) -> dict[str, list[int]]:
+    """
+    Create a mapping of labels to their tokenized ids.
+    """
     label_id_map = {}
     for label in labels: 
-        ids = tokenizer.encode(label, skip_special_tokens=True)
-        if len(ids) > 1: 
-            raise ValueError("Label should not be breakable")
-            # TODO: For breakable words, logprob is just the sum of subword logprobs
-            # implement that sometime later
-        label_id_map[label] = ids[1]
-    
+        ids = tokenizer.encode(label, add_special_tokens=False)
+        label_id_map[label] = ids
     return label_id_map
 
 def get_logsoftmax(x): 
     m = torch.nn.LogSoftmax(dim=1)
     return m(x.view(1, -1))
 
-def get_logsoftmax1(logits_T:torch.FloatTensor, negative:bool=False):
+def get_logsoftmax1(logits_T:torch.FloatTensor, negative:bool=False) -> torch.FloatTensor:
   """
   standard log likelihood for language modeling
   """
@@ -128,13 +126,21 @@ class GPTFewShot:
 
     def __init__(self, 
                  model_name: str,
-                model_details: dict=None):
+                 model_details: dict=None,
+                 **kwargs # to absorb `labels` and other arguments
+                ):
         
         self.model = model_name 
         self.model_details = model_details
         # if no model details are provided, set defaults
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         
+        self.temperature = self.model_details['temperature']
+        self.max_tokens = self.model_details['max_new_tokens']
+        self.top_p = self.model_details.get("top_p", 1)
+
+        # setting default
+        self.label_id_map = {}
 
     def generate_answer_debug(self, question_text: str):
         return self.client.chat.completions.create(
@@ -142,28 +148,23 @@ class GPTFewShot:
             messages=[
                 {"role": "user", "content": question_text}
             ],
-            temperature = self.model_details['temperature'], 
-            max_tokens = self.model_details['max_new_tokens'], 
-            # get top_p if provided 
-            top_p = self.model_details.get("top_p", 1),
-
+            temperature=self.temperature, 
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
         )
     
     def generate_answer(self, messages: list[dict]):
         answer_object = self.client.chat.completions.create(
             model=self.model, 
             messages=messages,
-            temperature = self.model_details['temperature'], 
-            max_tokens = self.model_details['max_new_tokens'], 
-            # get top_p if provided 
-            top_p = self.model_details.get("top_p", 1),
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
         )
 
         return answer_object.choices[0].message.content
     
-    def generate_answer_batch(self,
-                              query_texts: list) -> list[str]: 
-        
+    def generate_answer_batch(self, query_texts: list) -> list[str]: 
         
         answer_texts = []
 
@@ -180,10 +181,9 @@ class GPTFewShot:
             answer_object = self.client.chat.completions.create(
                 model=self.model, 
                 messages=message,
-                temperature = self.model_details['temperature'], 
-                max_tokens = self.model_details['max_new_tokens'], 
-                # get top_p if provided 
-                top_p = self.model_details.get("top_p", 1),
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
                 logprobs=True,
                 top_logprobs=5
                 
@@ -199,8 +199,10 @@ class GPTFewShot:
 
 class HFFewShot:
     def __init__(self,
-                model_name: str, 
-                model_details: dict=None):
+                 model_name: str, 
+                 model_details: dict=None,
+                 labels: list[str]=None,
+                ):
         
         """
         A general class for loading huggingface models with a 
@@ -242,12 +244,17 @@ class HFFewShot:
 
         # show how much gpu memory is being used per gpu 
         print("Model loaded")
-        display_gpu_status()
-
+        if self.model.device == "cuda":
+            display_gpu_status()
         
         self.max_new_tokens = model_details.get("max_new_tokens", 10)
         self.temperature = model_details.get("temperature", 0.01)
+        self.do_sample = model_details.get("do_sample", True)
 
+        if labels and model_details["scores"]:
+            self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
+            print("Label ID Map: ", self.label_id_map)
+        # TODO: consider setting default for `self.label_id_map` 
 
     def generate_answer_batch(self, 
                         query_texts: list) -> list[str]: 
@@ -259,21 +266,18 @@ class HFFewShot:
         """
         
         messages = [
-            self.tokenizer.apply_chat_template(messages,
-                                                tokenize=False) 
-                                                for messages in query_texts]
+            self.tokenizer.apply_chat_template(messages, tokenize=False) 
+            for messages in query_texts
+        ]
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        model_inputs = self.tokenizer(messages,
-                                    return_tensors="pt",
-                                    padding=True).to("cuda")
-
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
 
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = self.max_new_tokens,
-            do_sample=True,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
         )
@@ -285,10 +289,12 @@ class HFFewShot:
 
 class GemmaFewShot(HFFewShot):
     def __init__(self, 
-                model_name: str, 
-                model_details: dict=None):
+                 model_name: str, 
+                 model_details: dict=None,
+                 labels: list[str]=None,
+            ):
         
-        super().__init__(model_name, model_details)
+        super().__init__(model_name, model_details, labels)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
     
     def generate_answer(self, query_text: list[str]) -> str:
@@ -307,24 +313,26 @@ class GemmaFewShot(HFFewShot):
             message,
             return_tensors="pt",
             padding=True
-        ).to("cuda")
+        ).to(self.model.device)
         
         # Generating the output
         outputs = self.model.generate(
             **model_input,
             max_new_tokens=self.max_new_tokens,
-            do_sample=True,
+            do_sample=self.do_sample,
             temperature=self.temperature,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
         # Decoding the generated text
-        answer_text = self.tokenizer.decode(outputs[0, model_input['input_ids'].shape[-1]:], skip_special_tokens=True)
+        answer_text = self.tokenizer.decode(
+            outputs[0, model_input['input_ids'].shape[-1]:], 
+            skip_special_tokens=True
+        )
         
         return answer_text.strip()
         
-    def generate_answer_batch(self, 
-                            query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, query_texts: list) -> list[str]: 
         
         """
         Code to batch process multiple questions. 
@@ -342,12 +350,12 @@ class GemmaFewShot(HFFewShot):
             messages,
             return_tensors="pt", 
             padding=True
-        ).to("cuda")
+        ).to(self.model.device)
 
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = self.max_new_tokens,
-            do_sample=True,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
             output_scores=True
@@ -359,10 +367,12 @@ class GemmaFewShot(HFFewShot):
 
 class LlamaFewShot(HFFewShot):
     def __init__(self, 
-                model_name: str, 
-                model_details: dict=None):
+                 model_name: str, 
+                 model_details: dict=None,
+                 labels: list[str]=None
+                ):
         
-        super().__init__(model_name, model_details)
+        super().__init__(model_name, model_details, labels)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.tokenizer.pad_token = self.tokenizer.eos_token
     
@@ -382,7 +392,7 @@ class LlamaFewShot(HFFewShot):
             message,
             return_tensors="pt",
             padding=True
-        ).to("cuda")
+        ).to(self.model.device)
 
         # Define terminators for the generation
         terminators = [
@@ -394,14 +404,17 @@ class LlamaFewShot(HFFewShot):
         outputs = self.model.generate(
             **model_input,
             max_new_tokens=self.max_new_tokens,
-            do_sample=True,
+            do_sample=self.do_sample,
             eos_token_id=terminators,
             temperature=self.temperature,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
         # Decoding the generated text
-        answer_text = self.tokenizer.decode(outputs[0, model_input['input_ids'].shape[-1]:], skip_special_tokens=True)
+        answer_text = self.tokenizer.decode(
+            outputs[0, model_input['input_ids'].shape[-1]:], 
+            skip_special_tokens=True
+        )
         
         return answer_text.strip()
         
@@ -424,7 +437,7 @@ class LlamaFewShot(HFFewShot):
             messages,
             return_tensors="pt", 
             padding=True
-        ).to("cuda")
+        ).to(self.model.device)
 
         terminators = [
             self.tokenizer.eos_token_id,
@@ -433,30 +446,29 @@ class LlamaFewShot(HFFewShot):
         
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = 4,
+            max_new_tokens=self.max_new_tokens,
             do_sample=False,
-            #temperature=0.01,
+            temperature=self.temperature,
             eos_token_id=terminators,
             return_dict_in_generate=True, 
             pad_token_id=self.tokenizer.eos_token_id,
             output_scores=True
         )
 
-
-        answer_texts = self.tokenizer.batch_decode(outputs.sequences[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+        answer_texts = self.tokenizer.batch_decode(
+            outputs.sequences[:, model_inputs.input_ids.shape[-1]:], 
+            skip_special_tokens=True
+        )
 
         scores = outputs.scores
         
         #import ipdb; ipdb.set_trace()
 
         # return the scores and answers
-        return {"answers": answer_texts,
-                "scores": scores}
+        return {"answers": answer_texts, "scores": scores}
 
 
-    def generate_answer_batch(self, 
-                            query_texts: list) -> list[str]: 
-        
+    def generate_answer_batch(self, query_texts: list) -> list[str]: 
         """
         Code to batch process multiple questions. 
         Can be generalized to other types of query processing.
@@ -473,7 +485,7 @@ class LlamaFewShot(HFFewShot):
             messages,
             return_tensors="pt", 
             padding=True
-        ).to("cuda")
+        ).to(self.model.device)
 
         terminators = [
             self.tokenizer.eos_token_id,
@@ -482,15 +494,18 @@ class LlamaFewShot(HFFewShot):
         
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = self.max_new_tokens,
-            do_sample=True,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
             eos_token_id=terminators,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
             output_scores=True
         )
 
-        answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+        answer_texts = self.tokenizer.batch_decode(
+            outputs[:, model_inputs.input_ids.shape[-1]:], 
+            skip_special_tokens=True
+        )
 
 
         return answer_texts
@@ -502,17 +517,17 @@ class MistralFewShot:
                 model_details: dict=None):
         
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name,                                                    
-                                                         torch_dtype=torch.bfloat16,
-                                                         device_map="auto")
+        # TODO: support quantization
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
         
         self.max_new_tokens = model_details.get("max_new_tokens", 10)
         self.temperature = model_details.get("temperature", 0.01)
+        self.do_sample = model_details.get("do_sample", True)
 
         if labels and model_details["scores"]:
             self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
-            print("Label ID Map: ", self.label_id_map)
-            
+            print("Label ID Map: ", self.label_id_map)      
+        # TODO: consider setting default for `self.label_id_map` 
 
     def debug(self): 
         while True: 
@@ -528,12 +543,12 @@ class MistralFewShot:
             ]
 
         encoded_text = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
-        model_inputs = encoded_text.to("cuda") # has to be in cuda
+        model_inputs = encoded_text.to(self.model.device) # has to be in cuda
         outputs = self.model.generate(
             model_inputs, 
-            max_new_tokens = 10,
-            temperature=0.01,
-            do_sample=True, 
+            max_new_tokens=self.max_new_tokens,
+            temperature=self.temperature,
+            do_sample=self.do_sample, 
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -551,19 +566,17 @@ class MistralFewShot:
         """
         
         messages = [
-            self.tokenizer.apply_chat_template(messages,
-                                                tokenize=False) 
-                                                for messages in query_texts]
+            self.tokenizer.apply_chat_template(messages, tokenize=False) 
+            for messages in query_texts
+        ]
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        model_inputs = self.tokenizer(messages,
-                                    return_tensors="pt",
-                                    padding=True).to("cuda")
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
 
         outputs = self.model.generate(
             **model_inputs, 
-            max_new_tokens = self.max_new_tokens,
-            do_sample=True,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
             temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
         )
@@ -578,30 +591,31 @@ class MistralFewShot:
             raise ValueError("Labels not set. Use set_labels() to set labels.")
 
         messages = [
-            self.tokenizer.apply_chat_template(messages,
-                                                tokenize=False) 
-                                                for messages in query_texts
+            self.tokenizer.apply_chat_template(messages, tokenize=False) 
+            for messages in query_texts
         ]
         
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        model_inputs = self.tokenizer(messages,
-                                    return_tensors="pt",
-                                    padding=True).to("cuda")
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
         
-        outputs = self.model.generate(**model_inputs, 
-                                    max_new_tokens=self.max_new_tokens,
-                                    do_sample=True,
-                                    temperature=self.temperature, 
-                                    pad_token_id=self.tokenizer.eos_token_id,
-                                    return_dict_in_generate=True,
-                                    output_scores=True)
+        outputs = self.model.generate(
+            **model_inputs, 
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
+            temperature=self.temperature, 
+            pad_token_id=self.tokenizer.eos_token_id,
+            return_dict_in_generate=True,
+            output_scores=True
+        )
         
-        answer_texts = self.tokenizer.batch_decode(outputs.sequences,
-                                                    skip_special_tokens=True)
+        answer_texts = self.tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
         
         # do a sanity check on outputs 
 
         answer_texts = [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
-        stance_logprobs = get_label_logprobs(outputs.scores, self.label_id_map)
+        # TODO: Get the logprobs for the labels
+        # TODO: need `get_label_logprobs` function
+        # stance_logprobs = get_label_logprobs(outputs.scores, self.label_id_map)
+        stance_logprobs = None
 
         return answer_texts, stance_logprobs

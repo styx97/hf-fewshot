@@ -1,0 +1,38 @@
+# FILEPATH: hf_fewshot/configs/example_scoring_config.yaml
+
+# Main header
+exemplars:
+    use_exemplars: True
+    path: ../example_tasks/scoring/exemplars.jsonl
+    num_exemplars: 2
+    shuffle: False
+
+prompt_details: 
+    path: ../example_tasks/scoring/zero_shot
+    input_type: md
+    prompt_name: scoring_prompt
+    output_var: score
+    labels: # alternatively, specify range like this: `labels: "1-5"`
+      low: 1
+      high: 5
+    input_vars: [text]
+    
+model_details:
+    model_name: gpt-3.5-turbo
+    model_family: gpt
+    scores: False # set to `True` to get token probabilities of tokens in label range 
+    batch_size: 8
+    max_new_tokens: 10
+    temperature: 0.01
+    
+# The dataset should be a jsonlines file with keys that are of the following type 
+dataset:
+    # the unique_id of each example
+    dataset_name: test-scoring-dataset
+    id_key: id
+    path: ../example_tasks/scoring/dataset.jsonl
+    
+output:
+    output_dir: ../outputs
+    output_file: sample_scoring_output.jsonl
+    task_name: simple-scoring
