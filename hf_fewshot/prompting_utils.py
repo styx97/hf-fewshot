@@ -1,5 +1,4 @@
 import json, yaml
-import numpy as np 
 
 def load_jsonlines(filepath): 
     with open(filepath, 'r') as f: 
