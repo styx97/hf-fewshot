@@ -123,15 +123,15 @@ class GPTFewShot:
     a class the calls an openai model to generate text
     The openai key is fetched from the env variable OPENAI_API_KEY
     """
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY not set in environment variables")
-    
 
     def __init__(self, 
                  model_name: str,
                  model_details: dict=None,
                  **kwargs # to absorb `labels` and other arguments
                 ):
+        
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY not set in environment variables")
         
         self.model = model_name 
         self.model_details = model_details
@@ -398,6 +398,7 @@ class LlamaFewShot(HFFewShot):
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         ]
+        
     
     def generate_answer(self, query_text: list[str]) -> str:
         """

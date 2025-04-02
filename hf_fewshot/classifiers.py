@@ -211,23 +211,23 @@ def run_inference(model,
     with open(outfile, "a+") as f:
         i = 0
         while i < len(query_texts):
+            # TODO: when an error arises in each batch, the while loop continues infinitely
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                
                 batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
-
                 logprobs = get_logprobs(batched_output["scores"])
-                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else {}
-                
+                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
+
                 #import ipdb; ipdb.set_trace()
 
-                for pair_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
+                for item_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
                     output = {
-                        id_key: pair_id,
+                        id_key: item_id,
                         "output": answer,
-                        "preferences": preference,
                     }
+                    if preference:
+                        output["preferences"] = preference
                     f.write(json.dumps(output) + "\n")
                     
                 i += batch_size
@@ -259,6 +259,8 @@ def run_inference(model,
             except Exception as e:
                 print("An error occurred:")
                 print(e)
+                # TODO: when an error arises in each batch, the while loop continues infinitely
+                break
 
             if not api_model:
                 torch.cuda.empty_cache()
