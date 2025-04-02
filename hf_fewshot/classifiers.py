@@ -11,6 +11,7 @@ from hf_fewshot.models import (
     LlamaFewShot,
     GPTFewShot,
     GemmaFewShot,
+    Gwen2FewShot,
     display_gpu_status,
     get_unused_gpu_memory, 
     get_logsoftmax
@@ -30,7 +31,8 @@ model_map = {
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
-    "gemma": GemmaFewShot
+    "gemma": GemmaFewShot,
+    "qwen2": Gwen2FewShot
 }
 
 def get_option_preferences(model: LlamaFewShot, 
