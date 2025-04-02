@@ -59,9 +59,13 @@ def get_option_preferences(model: LlamaFewShot,
         # convert logprobs to probabilities 
 
         # NOTE: consider joint probability for multi-token options
-        option_probs = {option: np.exp(logprob.sum()) for option, logprob in option_logprobs.items()}
+        option_probs = {
+            option: float(np.exp(logprob.sum())) 
+            for option, logprob in option_logprobs.items()
+        }
 
         preferences.append(option_probs)
+
 
     return preferences
 
@@ -85,8 +89,6 @@ def get_logprobs(scores):
         logprobs.append(curr_logprobs)
     
     return np.array(logprobs)
-
-
 
 
 def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
@@ -227,7 +229,7 @@ def run_inference(model,
                         "preferences": preference,
                     }
                     f.write(json.dumps(output) + "\n")
-
+                    
                 i += batch_size
                 pbar.update(batch_size)
 
@@ -250,14 +252,21 @@ def run_inference(model,
                 if batch_size == 1: 
                     print("Batch size of 1 too large for GPU. Aborting")
 
-
-
                 batch_size = max(1, batch_size - 2)
                 print(f"Reducing batch size to {batch_size}")
                 torch.cuda.empty_cache()
 
+            except Exception as e:
+                print("An error occurred:")
+                print(e)
+
             if not api_model:
                 torch.cuda.empty_cache()
+
+    # report the length of the file 
+    with open(outfile, "r") as f:
+        lines = f.readlines()
+        print(f"Total lines written to {outfile}: {len(lines)}")
 
     pbar.close()
 
@@ -311,6 +320,7 @@ def few_shot_classifier(config_file: str):
         # processing for list of ints (require strings for encoding)
         if isinstance(labels[0], int):
             labels = list(map(str, labels))
+
     model = model_class(model_name=model_name, model_details=model_params, labels=labels)
     print("Model loaded")
 
@@ -322,7 +332,7 @@ def few_shot_classifier(config_file: str):
     id_values = [d[id_key] for d in dataset]
 
     run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model, dynamic_batching)
-    reorder_output(outfile, config["dataset"]["path"], id_key)
+    #reorder_output(outfile, config["dataset"]["path"], id_key)
 
 
 def get_args():

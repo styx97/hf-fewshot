@@ -81,10 +81,13 @@ def display_gpu_status():
         # Make sure NVML is always shutdown
         pynvml.nvmlShutdown()
 
-def labels_vocab_id_map(tokenizer, labels: list[str]) -> dict[str, list[int]]:
+def labels_vocab_id_map(tokenizer, labels: list) -> dict[str, list[int]]:
     """
     Create a mapping of labels to their tokenized ids.
     """
+    # if the labels are not a list of strings, make it so 
+    labels = map(lambda x: str(x).strip(), labels) # ensure all labels are strings and stripped of whitespace
+
     label_id_map = {}
     for label in labels: 
         ids = tokenizer.encode(label, add_special_tokens=False)
@@ -254,8 +257,10 @@ class HFFewShot:
         self.do_sample = model_details.get("do_sample", True)
 
         if labels and model_details["scores"]:
+            
             self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
             print("Label ID Map: ", self.label_id_map)
+        
         # TODO: consider setting default for `self.label_id_map` 
 
     def generate_answer_batch(self, query_texts: list) -> list[str]: 
@@ -301,9 +306,9 @@ class HFFewShot:
 
 class GemmaFewShot(HFFewShot):
     def __init__(self, 
-                 model_name: str, 
-                 model_details: dict=None,
-                 labels: list[str]=None,
+                model_name: str, 
+                model_details: dict=None,
+                labels: list[str]=None,
             ):
         
         super().__init__(model_name, model_details, labels)
