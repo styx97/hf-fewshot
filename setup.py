@@ -11,7 +11,7 @@ setup(
         ],
     },
     install_requires=[
-        "transformers>=4.44.2",
+        "transformers>=4.50.0",
         "torch>=2.3.0",
         "optimum>=1.22.0",
         "accelerate>=0.30.1",
