@@ -1,0 +1,36 @@
+# Main header
+pairwise_config: 
+    dataset: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/sample_dataset.jsonl
+    id_key: id # key containing unique id
+    text_key: text # key containing text
+    min_comparisons: 20 # minimum number of comparisons to be made
+
+exemplars:
+    use_exemplars: True
+    path: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/sample_exemplars.jsonl
+    num_exemplars: 2
+    shuffle: True
+    seed: 42
+
+prompt_details: 
+    path: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/md_prompt_example
+    prompt_name: pairwise_comparison_prompt
+    output_var: response
+    labels:  # keep this empty for open labels
+    input_vars: [text1, text2]
+    input_type: md
+    # input_type: json
+    # path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
+
+model_details:
+    model_name: gpt-3.5-turbo
+    model_family: gpt
+    scores: False
+    batch_size: 8
+    max_new_tokens: 10
+    temperature: 0.01
+        
+output:
+    output_dir: /fs/clip-political/rupak/hf-fewshot/outputs
+    output_file: sample_output.jsonl
+    task_name: simple-qa
