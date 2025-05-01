@@ -33,4 +33,16 @@ The final output file is a jsonlines file with the estimated scores for each ite
 
 ### How to run
 
-```python hf_pairwise/get_bt_scores.py --config example_pairwise_task/sample_pairwise_config.yaml```
+Install the package locally after cloning the repository:
+
+```bash
+git clone https://github.com/styx97/hf-fewshot
+cd hf-fewshot
+pip install -e .
+```
+
+Then, run the pairwise task using the provided config file:
+
+```bash
+hf_pairwise --config example_pairwise_task/sample_pairwise_config.yaml
+```
