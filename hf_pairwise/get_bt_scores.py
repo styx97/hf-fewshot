@@ -1,7 +1,11 @@
 import choix
 from collections import defaultdict
 import re
-from hf_fewshot.prompting_utils import load_jsonlines, load_yaml
+from hf_fewshot.prompting_utils import load_jsonlines, load_yaml, write_jsonlines
+from hf_fewshot.classifiers import few_shot_classifier
+from hf_pairwise.create_pairwise_dataset import create_pairwise_dataset
+import argparse
+from pathlib import Path
 
 # first, get the pairwise outcomes and clean them up 
 def clean_pairwise_results(
@@ -120,18 +124,18 @@ def default_expand_options(text : str):
 
     # lowercase and strip whitespace 
 
-    return [text.lower(), "".join(text.lower().split())] # return a list of variations to match against
+    return list(set([text.lower(), "".join(text.lower().split())])) # return a list of variations to match against
 
 
 def get_pairwise_outcomes(
     cleaned_results: list, 
     index_map: dict,
-    response_parser: callable = default_response_parser,
+    response_parser: callable = None, # Optional: a callable to parse the response field
     expand_options: callable = default_expand_options,
     tie_logic: str = "skip", # choices = add_both, skip  
     outcome_map = {
-        1: "Text 1", 
-        2: "Text 2",
+        1: "Q1", 
+        2: "Q2",
         3: "Tie",  # Optional: if using a tie-breaker or a neutral option, this can be used to indicate a tie
         4: "NONE" # Optional: The comparison is not valid
     }, 
@@ -160,15 +164,16 @@ def get_pairwise_outcomes(
         idx1, idx2 = index_map[id1], index_map[id2]
 
         # Determine the winner and loser based on the outcome
-        response = result.get('response', None)
+        response = result.get('response', None).lower()
 
         # Use the response_parser if provided
         if response_parser:
             response = response_parser(response)
 
         # check for different response formats: 
-        for key, val in outcome_map: 
+        for key, val in outcome_map.items(): 
             expanded_options = expand_options(val) # get variations of the text to match against
+
             if any([x in response for x in expanded_options]) : 
                 # if the response matches one of the options, assign the winner and loser
                 if key == 1: 
@@ -184,6 +189,8 @@ def get_pairwise_outcomes(
                         continue # skip this outcome, do not add to pairwise outcomes
                 elif key == 4: 
                     continue # do not add this outcome, invalid 
+
+                break 
 
     return pairwise_outcomes 
 
@@ -220,25 +227,87 @@ def get_bt_scores(pairwise_data, pairwise_results, threshold=2):
         id2 = str(elem['id2'])
 
         text1, text2 = elem['text1'], elem['text2']
-        
+
         if id1 not in dataset_indexed:
-            dataset_indexed[index_map[id1]].update({'id': id1, 'text': text1})
+            dataset_indexed[index_map[id1]] = {'id': id1, 'text': text1}
         if id2 not in dataset_indexed:
-            dataset_indexed[index_map[id2]].update({'id': id2, 'text': text2}) 
+            dataset_indexed[index_map[id2]] = {'id': id2, 'text': text2}
 
     nitems = find_nitems(pairwise_outcomes)
 
     scaled_results = choix.ilsr_pairwise(nitems, pairwise_outcomes, alpha=0.01)
-
+    
     for index, elem in enumerate(scaled_results):
         dataset_indexed[index]['score'] = elem
 
     return dataset_indexed
 
-
-
+def add_args(parser):
+    parser.add_argument(
+        "--config", 
+        type=str, 
+        required=True,
+        help="Path to the configuration file containing dataset and model details."
+    )
 
 
 if __name__ == "__main__":
-    pairwise_config = load_yaml("../example_pairwise_task/sample_config.yaml")
+    parser = argparse.ArgumentParser(description="Get pairwise outcomes and scores")
+    add_args(parser)
+    args = parser.parse_args()
+    config = load_yaml(args.config)
+    # first, load the data and create the pairwise dataset 
+    dataset= load_jsonlines(config['dataset']['pointwise_data'])
+    output_dir = Path(config['output']['output_dir'])
     
+    # created from output_dir, one can also specify the output file name in the config
+    pairwise_dataset_path = f"{output_dir}/pairwise_dataset.jsonl"
+
+    create_pairwise_dataset(
+        items=dataset, 
+        output_file=pairwise_dataset_path, 
+        num_comps=config['dataset']['min_comparisons'], 
+        id_key=config['dataset']['id_key'], 
+        text_key=config['dataset']['text_key']
+    )
+
+    # load the pairwise dataset
+    pairwise_dataset = load_jsonlines(pairwise_dataset_path) 
+
+    config['dataset']['path'] = pairwise_dataset_path
+
+    print(f"Pairwise data loaded from: {config['dataset']['path']}")
+    print("Size of the pairwise dataset:", len(pairwise_dataset))
+    
+    # get the pairwise outcomes 
+    few_shot_classifier(config) 
+
+
+    pairwise_results = load_jsonlines(output_dir / config['output']['output_file'])
+
+    print(f"Loaded {len(pairwise_results)} pairwise outcomes.")
+
+    bt_scores = get_bt_scores(pairwise_dataset, pairwise_results, threshold=2)
+    bt_scores_output_path = output_dir / config['output']['output_bt_file']
+
+    # write the bt scores to a jsonlines file
+    bt_scores_list = list(bt_scores.values())
+
+    # reverse sort the list by score
+    bt_scores_list.sort(key=lambda x: x['score'], reverse=True)
+
+    # save the scores to a jsonlines file
+    write_jsonlines(bt_scores_list, bt_scores_output_path)
+    print(f"BT scores saved to: {bt_scores_output_path}")
+    
+
+
+
+
+
+
+    
+
+
+
+

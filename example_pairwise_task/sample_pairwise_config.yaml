@@ -1,36 +1,36 @@
 # Main header
-pairwise_config: 
-    dataset: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/sample_dataset.jsonl
+dataset: 
+    pointwise_data: example_pairwise_task/sample_dataset.jsonl
     id_key: id # key containing unique id
     text_key: text # key containing text
     min_comparisons: 20 # minimum number of comparisons to be made
+    dataset_name: sample-pairwise-data
 
 exemplars:
-    use_exemplars: True
-    path: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/sample_exemplars.jsonl
+    use_exemplars: False
+    path: sample_exemplars.jsonl
     num_exemplars: 2
     shuffle: True
     seed: 42
 
 prompt_details: 
-    path: /fs/clip-political/rupak/hf-fewshot/example_pairwise_task/md_prompt_example
-    prompt_name: pairwise_comparison_prompt
+    path: example_pairwise_task/pairwise_prompt
+    prompt_name: None
     output_var: response
     labels:  # keep this empty for open labels
     input_vars: [text1, text2]
     input_type: md
-    # input_type: json
-    # path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
 
 model_details:
-    model_name: gpt-3.5-turbo
-    model_family: gpt
+    model_name: meta-llama/Llama-3.1-8B-Instruct
+    model_family: llama
     scores: False
     batch_size: 8
     max_new_tokens: 10
     temperature: 0.01
         
 output:
-    output_dir: /fs/clip-political/rupak/hf-fewshot/outputs
-    output_file: sample_output.jsonl
+    output_dir: example_pairwise_task/output
+    output_file: pairwise_results.jsonl
+    output_bt_file: pairwise_results_bt.jsonl
     task_name: simple-qa
