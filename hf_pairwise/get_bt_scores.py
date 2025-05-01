@@ -250,12 +250,7 @@ def add_args(parser):
         help="Path to the configuration file containing dataset and model details."
     )
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Get pairwise outcomes and scores")
-    add_args(parser)
-    args = parser.parse_args()
-    config = load_yaml(args.config)
+def create_dataset_and_scores(config): 
     # first, load the data and create the pairwise dataset 
     dataset= load_jsonlines(config['dataset']['pointwise_data'])
     output_dir = Path(config['output']['output_dir'])
@@ -299,15 +294,13 @@ if __name__ == "__main__":
     # save the scores to a jsonlines file
     write_jsonlines(bt_scores_list, bt_scores_output_path)
     print(f"BT scores saved to: {bt_scores_output_path}")
+
+def main(): 
+    parser = argparse.ArgumentParser(description="Get pairwise outcomes and scores")
+    add_args(parser)
+    args = parser.parse_args()
+    config = load_yaml(args.config)
+    create_dataset_and_scores(config)
     
-
-
-
-
-
-
-    
-
-
 
 

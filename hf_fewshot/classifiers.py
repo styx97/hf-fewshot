@@ -242,7 +242,6 @@ def get_args():
 
     return parser
 
-
 def main():
     parser = get_args()
     args = parser.parse_args()

@@ -8,10 +8,11 @@ setup(
         'console_scripts': [
             'hf_fewshot = hf_fewshot.classifiers:main',
             'hf_chat = hf_fewshot.agents:main',
+            'hf_pairwise = hf_pairwise.get_bt_scores:main',
         ],
     },
     install_requires=[
-        "transformers>=4.44.2",
+        "transformers>=4.51.3",
         "torch>=2.3.0",
         "optimum>=1.22.0",
         "accelerate>=0.30.1",
