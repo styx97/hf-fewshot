@@ -2,9 +2,11 @@ from tqdm.auto import tqdm
 import json
 from pathlib import Path
 import numpy as np
-import argparse
-import torch
+import re
 
+import argparse
+
+import torch
 from hf_fewshot.models import (
     MistralFewShot,
     HFFewShot,
@@ -91,6 +93,60 @@ def get_logprobs(scores):
         logprobs.append(curr_logprobs)
     
     return np.array(logprobs)
+
+
+def parse_labels_config(labels_config: str | list[str] | dict) -> list[str]:
+    """
+    Parse the labels config and return a list of labels
+
+    Examples
+    --------
+    >>> parse_labels_config("0-10")
+    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+    >>> parse_labels_config("1,2")
+    ['1', '2']
+    >>> parse_labels_config("1,2,3")
+    ['1', '2', '3']
+    >>> parse_labels_config("-5 - 5")
+    ['-5', '-4', '-3', '-2', '-1', '0', '1', '2', '3', '4', '5']
+    """
+    if isinstance(labels_config, list):
+        try:
+            labels = list(map(str, labels_config))
+        except:
+            raise ValueError("Labels should be a list of strings or integers")
+    elif isinstance(labels_config, str):
+        if ',' in labels_config:
+            labels = [l.strip() for l in labels_config.split(',')]
+        elif re.search(r'^[+-]?\d+\s?-\s?[+-]?\d+$', labels_config):
+            low_high = re.split(r'(?<=\d)\s?-\s?(?=[+-]?\d)', labels_config)
+            assert len(low_high) == 2, "Labels should be a string in the format '(±)<low> - (±)<high>'"
+            try: 
+                low_high = list(map(int, low_high))
+            except:
+                raise ValueError("Labels should be a string in the format '(±)<low> - (±)<high>'")
+            labels = list(map(str, list(range(low_high[0], low_high[1]+1))))
+        else: 
+            ValueError("if labels are specified as string, they should use comma separated list (for pairwise) or integer range in format '(±)<low> - (±)<high>' (for pointwise)")
+    elif isinstance(labels_config, dict):
+        assert "low" in labels_config and "high" in labels_config, "Labels should be a dict with keys 'low' and 'high'"
+        assert isinstance(labels_config["low"], (int, str)) and isinstance(labels_config["high"], (int, str)), "Labels should be a dict with keys 'low' and 'high' as integers"
+        if isinstance(labels_config["low"], str):
+            try:
+                labels_config["low"] = int(labels_config["low"])
+            except:
+                raise ValueError("Labels should be a dict with keys 'low' and 'high' as integers")
+        if isinstance(labels_config["high"], str):
+            try:
+                labels_config["high"] = int(labels_config["high"])
+            except:
+                raise ValueError("Labels should be a dict with keys 'low' and 'high' as integers")
+        assert labels_config["low"] < labels_config["high"], "For scoring, Label 'low' should be a smaller integer than label 'high'"
+        labels = list(map(str, list(range(labels_config["low"], labels_config["high"] + 1))))
+    else:
+        raise ValueError("Labels should be a list of strings or a string in the format 'low-high'")
+
+    return labels
 
 
 def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
@@ -313,17 +369,7 @@ def few_shot_classifier(config_file: str):
     model_class = model_map[model_family]
     labels = config['prompt_details']['labels'] if 'labels' in config['prompt_details'] else None
     if labels:
-        # processing for range value specified as a string like "0-4"
-        if isinstance(labels, str):
-            labels = dict(zip(["low", "high"], labels.split("-")))
-        # processing for range value specified as a dict like {"low": 0, "high": 4}
-        if isinstance(labels, dict):
-            labels = list(map(str, list(range(labels["low"], labels["high"] + 1))))
-        assert isinstance(labels, list), "Labels should be a list of strings"
-        assert all(isinstance(label, (str, int)) for label in labels), "Labels should be a list of integers or strings"
-        # processing for list of ints (require strings for encoding)
-        if isinstance(labels[0], int):
-            labels = list(map(str, labels))
+        labels = parse_labels_config(labels)
 
     model = model_class(model_name=model_name, model_details=model_params, labels=labels)
     print("Model loaded")
