@@ -211,7 +211,6 @@ def run_inference(model,
     with open(outfile, "a+") as f:
         i = 0
         while i < len(query_texts):
-            # TODO: when an error arises in each batch, the while loop continues infinitely
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
@@ -259,7 +258,7 @@ def run_inference(model,
             except Exception as e:
                 print("An error occurred:")
                 print(e)
-                # TODO: when an error arises in each batch, the while loop continues infinitely
+                # NOTE: when an error arises in a batch, the while loop would continues infinitely so we break here
                 break
 
             if not api_model:
