@@ -8,11 +8,11 @@ import argparse
 
 import torch
 from hf_fewshot.models import (
-    MistralFewShot,
+    # MistralFewShot,
     HFFewShot,
     LlamaFewShot,
     GPTFewShot,
-    GemmaFewShot,
+    Gemma2FewShot,
     Gwen2FewShot,
     Gemma3FewShot,
     display_gpu_status,
@@ -30,13 +30,13 @@ from hf_fewshot.prompting_utils import (
 )
 
 model_map = {
-    "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
-    "gemma": GemmaFewShot,
+    "qwen2": Gwen2FewShot,
+    "gemma2": Gemma2FewShot,
     "gemma3": Gemma3FewShot,
-    "qwen2": Gwen2FewShot
+    # "mistral": MistralFewShot,
 }
 
 def get_option_preferences(model: LlamaFewShot, 
@@ -294,10 +294,10 @@ def run_inference(model,
                     continue
 
                 unused_gpu_mem = get_unused_gpu_memory()
-                print("Unused GPU memory: ", unused_gpu_mem)
 
                 # if dynamic batching is turned on, increase batch size by 2 
                 if unused_gpu_mem > 40 and dynamic_batching:
+                    print("Unused GPU memory: ", unused_gpu_mem)
                     batch_size += 2
                     print(f"Increasing batch size to {batch_size}")
                     torch.cuda.empty_cache()

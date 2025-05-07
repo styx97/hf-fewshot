@@ -1,11 +1,11 @@
 import torch 
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers import Gemma3ForCausalLM
+from transformers import AutoProcessor, Gemma3ForConditionalGeneration
 from transformers import BitsAndBytesConfig
 import os 
 from openai import OpenAI 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union, Tuple, Mapping
 import pynvml
 from dotenv import load_dotenv
 
@@ -82,7 +82,7 @@ def display_gpu_status():
         # Make sure NVML is always shutdown
         pynvml.nvmlShutdown()
 
-def labels_vocab_id_map(tokenizer, labels: list) -> dict[str, list[int]]:
+def labels_vocab_id_map(tokenizer, labels: List[str]) -> Mapping[str, List[int]]:
     """
     Create a mapping of labels to their tokenized ids.
     """
@@ -99,7 +99,7 @@ def get_logsoftmax(x):
     m = torch.nn.LogSoftmax(dim=1)
     return m(x.view(1, -1))
 
-def get_logsoftmax1(logits_T:torch.FloatTensor, negative:bool=False) -> torch.FloatTensor:
+def get_logsoftmax1(logits_T: torch.FloatTensor, negative: bool=False) -> torch.FloatTensor:
   """
   standard log likelihood for language modeling
   """
@@ -112,11 +112,11 @@ def get_logsoftmax1(logits_T:torch.FloatTensor, negative:bool=False) -> torch.Fl
 
 class FewShotModel(ABC):
     @abstractmethod
-    def generate_answer(self, messages: List[Dict]) -> Dict:
+    def generate_answer(self, messages: List[Dict]) -> str:
         pass
 
     @abstractmethod
-    def generate_answer_batch(self, query_texts: List[str]) -> List[str]:
+    def generate_answer_batch(self, message_objects: List[Dict]) -> list[str]:
         pass
 
 class GPTFewShot:
@@ -152,12 +152,12 @@ class GPTFewShot:
             messages=[
                 {"role": "user", "content": question_text}
             ],
-            temperature=self.temperature, 
+            temperature=self.temperature,
             max_tokens=self.max_tokens,
             top_p=self.top_p,
         )
     
-    def generate_answer(self, messages: list[dict]):
+    def generate_answer(self, messages: List[Dict]):
         answer_object = self.client.chat.completions.create(
             model=self.model, 
             messages=messages,
@@ -168,44 +168,44 @@ class GPTFewShot:
 
         return answer_object.choices[0].message.content
     
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> list[str]:
         
         answer_texts = []
 
-        for message in query_texts: 
+        for message in message_objects:
             answer_text = self.generate_answer(message)
             answer_texts.append(answer_text)
-
+        
         return answer_texts
     
-    def generate_answer_batch_scores(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch_scores(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Mapping[str, float]]]:
         answer_texts = []
         top_logprobs = []
-        for message in query_texts: 
-            answer_object = self.client.chat.completions.create(
+        
+        for message in message_objects:
+            response = self.client.chat.completions.create(
                 model=self.model, 
                 messages=message,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 top_p=self.top_p,
                 logprobs=True,
-                top_logprobs=5
-                
+                top_logprobs=20
             )
-            answer_text = answer_object.choices[0].message.content
-            # This is getting the top n logprobs for the first token!
-
-            label_logprobs = answer_object.choices[0].logprobs.content[0]
-            top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
+            answer_text = response.choices[0].message.content
             answer_texts.append(answer_text)
+
+            label_logprobs = response.choices[0].logprobs.content[0]
+            # NOTE: not compatible with other model's logprobs output
+            top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
+        
         return answer_texts, top_logprobs
             
-
 class HFFewShot:
     def __init__(self,
                  model_name: str, 
                  model_details: dict=None,
-                 labels: list[str]=None,
+                 labels: List[str]=None,
                  model_class=AutoModelForCausalLM,
                 ):
         """
@@ -231,7 +231,8 @@ class HFFewShot:
                 self.model = model_class.from_pretrained(
                     model_name,                                                    
                     load_in_8bit=True,
-                    device_map="auto"
+                    device_map="auto",
+                    torch_dtype="auto"
                 ).eval()
                 
             elif model_details["quantization"] == "4bit":
@@ -245,7 +246,8 @@ class HFFewShot:
                 self.model = model_class.from_pretrained(
                     model_name,
                     quantization_config=bnb_config,
-                    device_map="auto"
+                    device_map="auto",
+                    torch_dtype="auto"
                 ).eval()
 
         # show how much gpu memory is being used per gpu 
@@ -264,7 +266,7 @@ class HFFewShot:
         
         # TODO: consider setting default for `self.label_id_map`
 
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
     
         """
         Code to batch process multiple questions. 
@@ -274,7 +276,7 @@ class HFFewShot:
         
         messages = [
             self.tokenizer.apply_chat_template(messages, tokenize=False) 
-            for messages in query_texts
+            for messages in message_objects
         ]
 
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -285,7 +287,7 @@ class HFFewShot:
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
-            temperature=self.temperature, 
+            temperature=self.temperature if self.do_sample else None,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -297,7 +299,7 @@ class HFFewShot:
     def _prompt_to_messages(
         prompt: str, 
         system_message: Optional[str]=None
-      ) -> List[Dict[str, str]]:
+      ) -> List[Mapping[str, str]]:
         """
         Convert a prompt to messages object.
         """
@@ -311,23 +313,30 @@ class HFFewShot:
         return messages
 
 
-class GemmaFewShot(HFFewShot):
+class Gemma2FewShot(HFFewShot):
     def __init__(self, 
                 model_name: str, 
                 model_details: dict=None,
-                labels: list[str]=None,
+                labels: List[str]=None,
             ):
         
         super().__init__(model_name, model_details, labels)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer.padding_side = "left"
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.terminators = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+        self.terminators = list(set(t for t in self.terminators if t))
     
-    def generate_answer(self, query_text: list[str]) -> str:
+    def generate_answer(self, message_object: List[Dict]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
         """
         # Applying the chat template to the list of messages (conversational history)
         message = self.tokenizer.apply_chat_template(
-            query_text,
+            message_object,
             add_generation_prompt=True,
             tokenize=False
         )
@@ -344,7 +353,10 @@ class GemmaFewShot(HFFewShot):
             **model_input,
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
-            temperature=self.temperature,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
+            eos_token_id=self.terminators,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -356,7 +368,7 @@ class GemmaFewShot(HFFewShot):
         
         return answer_text.strip()
         
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
         
         """
         Code to batch process multiple questions. 
@@ -367,7 +379,7 @@ class GemmaFewShot(HFFewShot):
                 messages,
                 add_generation_prompt=True,
                 tokenize=False
-            ) for messages in query_texts
+            ) for messages in message_objects
         ]
 
         model_inputs = self.tokenizer(
@@ -380,12 +392,20 @@ class GemmaFewShot(HFFewShot):
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
-            temperature=self.temperature, 
-            pad_token_id=self.tokenizer.eos_token_id,
-            output_scores=True
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
+            eos_token_id=self.terminators,
+            output_scores=False
         )
 
-        answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+        answer_texts = self.tokenizer.batch_decode(
+            outputs[:, model_inputs.input_ids.shape[-1]:], 
+            skip_special_tokens=True
+        )
+
+        answer_texts = [a.strip() for a in answer_texts]
+        
         return answer_texts
 
 
@@ -393,27 +413,26 @@ class LlamaFewShot(HFFewShot):
     def __init__(self, 
                  model_name: str, 
                  model_details: dict=None,
-                 labels: list[str]=None
+                 labels: List[str]=None
                 ):
         
         super().__init__(model_name, model_details, labels)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.tokenizer.pad_token = self.tokenizer.eos_token
-
-        # Define terminators for the generation
         self.terminators = [
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         ]
+        self.terminators = list(set(t for t in self.terminators if t))
         
     
-    def generate_answer(self, query_text: list[str]) -> str:
+    def generate_answer(self, message_object: List[Dict]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
         """
         # Applying the chat template to the list of messages (conversational history)
         message = self.tokenizer.apply_chat_template(
-            query_text,
+            message_object,
             add_generation_prompt=True,
             tokenize=False
         )
@@ -430,8 +449,10 @@ class LlamaFewShot(HFFewShot):
             **model_input,
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
-            temperature=self.temperature,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -442,9 +463,8 @@ class LlamaFewShot(HFFewShot):
         )
         
         return answer_text.strip()
-        
-    def generate_answer_batch_logprobs(self, 
-                        query_texts: list) -> list[str]: 
+    
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Tuple[torch.FloatTensor]]]:
     
         """
         Code to batch process multiple questions. 
@@ -455,7 +475,7 @@ class LlamaFewShot(HFFewShot):
                 messages,
                 add_generation_prompt=True,
                 tokenize=False
-            ) for messages in query_texts
+            ) for messages in message_objects
         ]
 
         model_inputs = self.tokenizer(
@@ -468,10 +488,12 @@ class LlamaFewShot(HFFewShot):
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
-            temperature=self.temperature,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
-            return_dict_in_generate=True, 
             pad_token_id=self.tokenizer.eos_token_id,
+            return_dict_in_generate=True, 
             output_scores=True
         )
 
@@ -483,7 +505,7 @@ class LlamaFewShot(HFFewShot):
         return {"answers": answer_texts, "scores": outputs.scores}
 
 
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
         """
         Code to batch process multiple questions. 
         Can be generalized to other types of query processing.
@@ -493,7 +515,7 @@ class LlamaFewShot(HFFewShot):
                 messages,
                 add_generation_prompt=True,
                 tokenize=False
-            ) for messages in query_texts
+            ) for messages in message_objects
         ]
 
         model_inputs = self.tokenizer(
@@ -506,8 +528,10 @@ class LlamaFewShot(HFFewShot):
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
-            temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
             output_scores=True
         )
@@ -524,7 +548,7 @@ class Gwen2FewShot(HFFewShot):
     def __init__(self, 
                  model_name: str, 
                  model_details: dict=None,
-                 labels: list[str]=None
+                 labels: List[str]=None
                 ):
         
         super().__init__(model_name, model_details, labels)
@@ -534,14 +558,15 @@ class Gwen2FewShot(HFFewShot):
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids("<|endoftext|>")
         ]
+        self.terminators = list(set(t for t in self.terminators if t))
 
-    def generate_answer(self, query_text: list[str]) -> str:
+    def generate_answer(self, message_object: List[Dict]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
         """
         # Applying the chat template to the list of messages (conversational history)
         message = self.tokenizer.apply_chat_template(
-            query_text,
+            message_object,
             add_generation_prompt=True,
             tokenize=False
         )
@@ -558,8 +583,10 @@ class Gwen2FewShot(HFFewShot):
             **model_input,
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
-            temperature=self.temperature,
             pad_token_id=self.tokenizer.eos_token_id,
         )
 
@@ -572,19 +599,16 @@ class Gwen2FewShot(HFFewShot):
         return answer_text.strip()
 
   
-    def generate_answer_batch_logprobs(self, 
-                        query_texts: list) -> list[str]: 
-    
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Tuple[torch.FloatTensor]]]:
         """
-        Code to batch process multiple questions. 
-        Can be generalized to other types of query processing.
+        Code to batch process multiple questions.
         """
         messages = [
             self.tokenizer.apply_chat_template(
                 messages,
                 add_generation_prompt=True,
                 tokenize=False
-            ) for messages in query_texts
+            ) for messages in message_objects
         ]
 
         model_inputs = self.tokenizer(
@@ -597,7 +621,9 @@ class Gwen2FewShot(HFFewShot):
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
-            temperature=self.temperature,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
             return_dict_in_generate=True, 
             pad_token_id=self.tokenizer.eos_token_id,
@@ -612,7 +638,7 @@ class Gwen2FewShot(HFFewShot):
         return {"answers": answer_texts, "scores": outputs.scores}
 
 
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
         """
         Code to batch process multiple questions. 
         Can be generalized to other types of query processing.
@@ -622,7 +648,7 @@ class Gwen2FewShot(HFFewShot):
                 messages,
                 add_generation_prompt=True,
                 tokenize=False
-            ) for messages in query_texts
+            ) for messages in message_objects
         ]
 
         model_inputs = self.tokenizer(
@@ -635,8 +661,10 @@ class Gwen2FewShot(HFFewShot):
             **model_inputs, 
             max_new_tokens=self.max_new_tokens,
             do_sample=self.do_sample,
+            temperature=self.temperature if self.do_sample else None,
+            top_p=0.95 if self.do_sample else None,
+            top_k=20 if self.do_sample else None,
             eos_token_id=self.terminators,
-            temperature=self.temperature, 
             pad_token_id=self.tokenizer.eos_token_id,
             output_scores=True
         )
@@ -652,238 +680,266 @@ class Gemma3FewShot(HFFewShot):
     def __init__(self, 
                  model_name: str, 
                  model_details: dict=None,
-                 labels: list[str]=None
+                 labels: List[str]=None
                 ):
         
-        super().__init__(model_name, model_details, labels, model_class=Gemma3ForCausalLM)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
+        super().__init__(model_name, model_details, labels, model_class=Gemma3ForConditionalGeneration)
+        self.processor = AutoProcessor.from_pretrained(model_name)
+        self.tokenizer = self.processor.tokenizer
+        self.tokenizer.padding_side = "left"
         self.tokenizer.pad_token = self.tokenizer.eos_token
-
-        # Define terminators for the generation
         self.terminators = [
             self.tokenizer.eos_token_id,
-            self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            self.tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+            self.tokenizer.convert_tokens_to_ids("<|endoftext|>"),
+            self.tokenizer.convert_tokens_to_ids("<|end_of_turn|>"),
         ]
+        self.terminators = list(set(t for t in self.terminators if t))
     
-    def generate_answer(self, query_text: list[str]) -> str:
+    def _prepare_message_object(self, message_object: List[Dict]) -> List[dict]:
+        """
+        Convert a message object to the format required by the model.
+        """
+        # Convert the message object to a list of strings
+        message_object = [
+            {
+                'role': message['role'],
+                'content': [{"type": "text", "text": message['content']}] if isinstance(message['content'], str) else message['content']
+            } 
+            for message in message_object
+        ]
+        return message_object
+    
+
+    def _prepare_message_objects(self, message_objects: List[Dict]) -> List[str]:
+        """
+        Convert a list of message objects to the format required by the model.
+        """
+        # Convert the message object to a list of strings
+        message_objects = [
+            self._prepare_message_object(message_object)
+            for message_object in message_objects
+        ]
+        return message_objects
+
+
+    def generate_answer(self, message_object: List[Dict]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
         """
-        # Applying the chat template to the list of messages (conversational history)
-        message = self.tokenizer.apply_chat_template(
-            query_text,
-            add_generation_prompt=True,
-            tokenize=False
-        )
+        message_object = self._prepare_message_object(message_object)
 
-        # Tokenizing the message
-        model_input = self.tokenizer(
-            message,
-            return_tensors="pt",
-            padding=True
-        ).to(self.model.device)
+        model_input = self.processor.apply_chat_template(
+            message_object, add_generation_prompt=True, tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(self.model.device, dtype=self.model.dtype)
 
-        # Generating the output
-        outputs = self.model.generate(
-            **model_input,
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.do_sample,
-            eos_token_id=self.terminators,
-            temperature=self.temperature,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **model_input,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=self.do_sample,
+                eos_token_id=self.terminators,
+                temperature=self.temperature if self.do_sample else None,
+                top_p=0.95 if self.do_sample else None,
+                top_k=20 if self.do_sample else None,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
 
         # Decoding the generated text
-        answer_text = self.tokenizer.decode(
-            outputs[0, model_input['input_ids'].shape[-1]:], 
+        answer_text = self.processor.decode(
+            outputs[0][model_input['input_ids'].shape[-1]:], 
             skip_special_tokens=True
         )
         
         return answer_text.strip()
     
-    def generate_answer_batch(self, query_texts: list) -> list[str]: 
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
         """
         Code to batch process multiple questions. 
         Can be generalized to other types of query processing.
         """
-        messages = [
-            self.tokenizer.apply_chat_template(
-                query_text,
-                add_generation_prompt=True,
-                tokenize=False
-            ) for query_text in query_texts
-        ]
+        message_objects = self._prepare_message_objects(message_objects)
 
-        model_inputs = self.tokenizer(
-            messages,
-            return_tensors="pt", 
-            padding=True
-        ).to(self.model.device)
+        model_inputs = self.processor.apply_chat_template(
+            message_objects, 
+            add_generation_prompt=True, 
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(self.model.device, dtype=self.model.dtype)
+        
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **model_inputs, 
+                max_new_tokens=self.max_new_tokens,
+                do_sample=self.do_sample,
+                eos_token_id=self.terminators,
+                temperature=self.temperature if self.do_sample else None,
+                top_p=0.95 if self.do_sample else None,
+                top_k=20 if self.do_sample else None,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
 
-        outputs = self.model.generate(
-            **model_inputs, 
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.do_sample,
-            eos_token_id=self.terminators,
-            temperature=self.temperature, 
-            pad_token_id=self.tokenizer.eos_token_id,
-            # output_scores=True # has no effect if return_dict_in_generate is not set to True
-        )
-
-        answer_texts = self.tokenizer.batch_decode(
+        answer_texts = self.processor.batch_decode(
             outputs[:, model_inputs.input_ids.shape[-1]:], 
             skip_special_tokens=True
         )
+
         answer_texts = [a.strip() for a in answer_texts]
 
         return answer_texts
     
-    def generate_answer_batch_logprobs(self, query_texts: list) -> list[str]: 
-    
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Tuple[torch.FloatTensor]]]:
         """
-        Code to batch process multiple questions. 
-        Can be generalized to other types of query processing.
+        Code to batch process multiple questions.
         """
-        messages = [
-            self.tokenizer.apply_chat_template(
-                query_text,
-                add_generation_prompt=True,
-                tokenize=False
-            ) for query_text in query_texts
-        ]
+        message_objects = self._prepare_message_objects(message_objects)
 
-        model_inputs = self.tokenizer(
-            messages,
-            return_tensors="pt", 
-            padding=True
-        ).to(self.model.device)
+        model_inputs = self.processor.apply_chat_template(
+            message_objects, 
+            add_generation_prompt=True, 
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(self.model.device, dtype=self.model.dtype)
         
-        outputs = self.model.generate(
-            **model_inputs, 
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.do_sample,
-            temperature=self.temperature,
-            eos_token_id=self.terminators,
-            pad_token_id=self.tokenizer.eos_token_id,
-            return_dict_in_generate=True, 
-            output_scores=True
-        )
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **model_inputs, 
+                max_new_tokens=self.max_new_tokens,
+                do_sample=self.do_sample,
+                temperature=self.temperature if self.do_sample else None,
+                top_p=0.8 if self.do_sample else None,
+                top_k=20 if self.do_sample else None,
+                eos_token_id=self.terminators,
+                pad_token_id=self.tokenizer.eos_token_id,
+                return_dict_in_generate=True, 
+                output_scores=True
+            )
 
-        answer_texts = self.tokenizer.batch_decode(
+        answer_texts = self.processor.batch_decode(
             outputs.sequences[:, model_inputs.input_ids.shape[-1]:], 
             skip_special_tokens=True
         )
+
         answer_texts = [a.strip() for a in answer_texts]
 
         return {"answers": answer_texts, "scores": outputs.scores}
 
 
-class MistralFewShot:
-    def __init__(self, 
-                model_name: str, 
-                labels: list[str]=None, 
-                model_details: dict=None):
+# class MistralFewShot:
+#     def __init__(self, 
+#                 model_name: str, 
+#                 labels: List[str]=None, 
+#                 model_details: dict=None):
         
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        # TODO: support quantization
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
+#         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+#         # TODO: support quantization
+#         self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
         
-        self.max_new_tokens = model_details.get("max_new_tokens", 10)
-        self.temperature = model_details.get("temperature", 0.01)
-        self.do_sample = model_details.get("do_sample", True)
+#         self.max_new_tokens = model_details.get("max_new_tokens", 10)
+#         self.temperature = model_details.get("temperature", 0.01)
+#         self.do_sample = model_details.get("do_sample", True)
 
-        if labels and model_details["scores"]:
-            self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
-            print("Label ID Map: ", self.label_id_map)      
-        # TODO: consider setting default for `self.label_id_map` 
+#         if labels and model_details["scores"]:
+#             self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
+#             print("Label ID Map: ", self.label_id_map)      
+#         # TODO: consider setting default for `self.label_id_map` 
 
-    def debug(self): 
-        while True: 
-            query_text = input("Enter prompt string: ")
-            print(self.generate_answer(query_text))
+#     def debug(self): 
+#         while True: 
+#             message_object = input("Enter prompt string: ")
+#             print(self.generate_answer(message_object))
 
 
-    def generate_answer(self, question_text: str):
-        # This is for debug, mostly
+#     def generate_answer(self, question_text: str):
+#         # This is for debug, mostly
         
-        messages = [
-                {"role": "user", "content": f"{question_text}"},
-            ]
+#         messages = [
+#                 {"role": "user", "content": f"{question_text}"},
+#             ]
 
-        encoded_text = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
-        model_inputs = encoded_text.to(self.model.device) # has to be in cuda
-        outputs = self.model.generate(
-            model_inputs, 
-            max_new_tokens=self.max_new_tokens,
-            temperature=self.temperature,
-            do_sample=self.do_sample, 
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
+#         encoded_text = self.tokenizer.apply_chat_template(messages, return_tensors="pt")
+#         model_inputs = encoded_text.to(self.model.device) # has to be in cuda
+#         outputs = self.model.generate(
+#             model_inputs, 
+#             max_new_tokens=self.max_new_tokens,
+#             temperature=self.temperature if self.do_sample else None,
+#             # top_p=self.top_p,
 
-        # skip_special_tokens doesn't work sometimes so we do it manually
-        answer_text = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-        return answer_text.split("[/INST]")[-1].strip()
+#             do_sample=self.do_sample, 
+#             pad_token_id=self.tokenizer.eos_token_id,
+#         )
+
+#         # skip_special_tokens doesn't work sometimes so we do it manually
+#         answer_text = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+#         return answer_text.split("[/INST]")[-1].strip()
     
-    def generate_answer_batch(self, 
-                            query_texts: list) -> list[str]: 
+#     def generate_answer_batch(self, 
+#                             message_objects: List[Dict]) -> List[str]:
         
-        """
-        Code to batch process multiple questions. 
-        Can be generalized to other types of query processing.
-        TODO: Get FlashAttention2 to work with this.
-        """
+#         """
+#         Code to batch process multiple questions. 
+#         Can be generalized to other types of query processing.
+#         TODO: Get FlashAttention2 to work with this.
+#         """
         
-        messages = [
-            self.tokenizer.apply_chat_template(messages, tokenize=False) 
-            for messages in query_texts
-        ]
+#         messages = [
+#             self.tokenizer.apply_chat_template(messages, tokenize=False) 
+#             for messages in message_objects
+#         ]
 
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+#         self.tokenizer.pad_token = self.tokenizer.eos_token
+#         model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
 
-        outputs = self.model.generate(
-            **model_inputs, 
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.do_sample,
-            temperature=self.temperature, 
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
+#         outputs = self.model.generate(
+#             **model_inputs, 
+#             max_new_tokens=self.max_new_tokens,
+#             do_sample=self.do_sample,
+#             temperature=self.temperature, if self.do_sample else None 
+#             # top_p=self.top_p,
 
-        answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+#             pad_token_id=self.tokenizer.eos_token_id,
+#         )
+
+#         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+#         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
     
-    def generate_answer_batch_scores(self, 
-                                     query_texts: list) -> list[str]:
+#     def generate_answer_batch_scores(self, message_objects: List[Dict]) -> list[str]:
 
-        if not hasattr(self, "labels"):
-            raise ValueError("Labels not set. Use set_labels() to set labels.")
+#         if not hasattr(self, "labels"):
+#             raise ValueError("Labels not set. Use set_labels() to set labels.")
 
-        messages = [
-            self.tokenizer.apply_chat_template(messages, tokenize=False) 
-            for messages in query_texts
-        ]
+#         messages = [
+#             self.tokenizer.apply_chat_template(messages, tokenize=False) 
+#             for messages in message_objects
+#         ]
         
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+#         self.tokenizer.pad_token = self.tokenizer.eos_token
+#         model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
         
-        outputs = self.model.generate(
-            **model_inputs, 
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.do_sample,
-            temperature=self.temperature, 
-            pad_token_id=self.tokenizer.eos_token_id,
-            return_dict_in_generate=True,
-            output_scores=True
-        )
-        
-        answer_texts = self.tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
-        
-        # do a sanity check on outputs 
+#         outputs = self.model.generate(
+#             **model_inputs, 
+#             max_new_tokens=self.max_new_tokens,
+#             do_sample=self.do_sample,
+#             temperature=self.temperature, if self.do_sample else None 
+#             # top_p=self.top_p,
 
-        answer_texts = [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
-        # TODO: Get the logprobs for the labels
-        # TODO: need `get_label_logprobs` function
-        # stance_logprobs = get_label_logprobs(outputs.scores, self.label_id_map)
-        stance_logprobs = None
+#             pad_token_id=self.tokenizer.eos_token_id,
+#             return_dict_in_generate=True,
+#             output_scores=True
+#         )
+        
+#         answer_texts = self.tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
+        
+#         # do a sanity check on outputs 
 
-        return answer_texts, stance_logprobs
+#         answer_texts = [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+#         # TODO: Get the logprobs for the labels
+#         # TODO: need `get_label_logprobs` function
+#         # stance_logprobs = get_label_logprobs(outputs.scores, self.label_id_map)
+#         stance_logprobs = None
+
+#         return answer_texts, stance_logprobs
