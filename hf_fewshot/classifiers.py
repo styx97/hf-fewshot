@@ -2,17 +2,22 @@ from tqdm.auto import tqdm
 import json
 from pathlib import Path
 import numpy as np
-import argparse
-import torch
+import re
 
+import argparse
+
+import torch
 from hf_fewshot.models import (
-    MistralFewShot,
+    # MistralFewShot,
     HFFewShot,
     LlamaFewShot,
     GPTFewShot,
-    GemmaFewShot,
+    Gemma2FewShot,
+    Gwen2FewShot,
+    Gemma3FewShot,
     display_gpu_status,
-    get_unused_gpu_memory
+    get_unused_gpu_memory, 
+    get_logsoftmax
 )
 
 from hf_fewshot.prompting_utils import (
@@ -25,12 +30,123 @@ from hf_fewshot.prompting_utils import (
 )
 
 model_map = {
-    "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
-    "gemma": GemmaFewShot
+    "qwen2": Gwen2FewShot,
+    "gemma2": Gemma2FewShot,
+    "gemma3": Gemma3FewShot,
+    # "mistral": MistralFewShot,
 }
+
+def get_option_preferences(model: LlamaFewShot, 
+                           logprobs: np.array, 
+                           options: list[str]) -> np.array: 
+    """
+    Given the logprobs of the options, find the model preferences for each option
+    """
+
+    # NOTE: keep all tokens for multi-token options
+    option_token_dict = {
+        option: model.tokenizer.encode(option, add_special_tokens=False) 
+        for option in options
+    }
+    
+    preferences = []
+    num_examples = logprobs.shape[0]
+
+    for index in range(num_examples):
+        option_logprobs  = {
+            option: logprobs[index, 0, option_token_dict[option]] 
+            for option in options
+        }
+        # convert logprobs to probabilities 
+
+        # NOTE: consider joint probability for multi-token options
+        option_probs = {
+            option: float(np.exp(logprob.sum())) 
+            for option, logprob in option_logprobs.items()
+        }
+
+        preferences.append(option_probs)
+
+
+    return preferences
+
+
+def get_logprobs(scores): 
+    """
+    This function takes raw logit scores and returns logprobs for each output label
+    
+    Note: Changes shape from (max_new_tokens, batch_size, vocab_size) -> (batch_size, max_new_tokens, vocab_size)
+    """
+
+    # find out the batch size 
+    batch_size = scores[0].shape[0]
+    logprobs = [] 
+    for index in range(batch_size):
+        curr_logprobs = []
+        for token_output in scores: 
+            token_output_logprobs = get_logsoftmax(token_output[index]) 
+            curr_logprobs.append(token_output_logprobs[0].detach().cpu().numpy())
+        
+        logprobs.append(curr_logprobs)
+    
+    return np.array(logprobs)
+
+
+def parse_labels_config(labels_config: str | list[str] | dict) -> list[str]:
+    """
+    Parse the labels config and return a list of labels
+
+    Examples
+    --------
+    >>> parse_labels_config("0-10")
+    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+    >>> parse_labels_config("1,2")
+    ['1', '2']
+    >>> parse_labels_config("1,2,3")
+    ['1', '2', '3']
+    >>> parse_labels_config("-5 - 5")
+    ['-5', '-4', '-3', '-2', '-1', '0', '1', '2', '3', '4', '5']
+    """
+    if isinstance(labels_config, list):
+        try:
+            labels = list(map(str, labels_config))
+        except:
+            raise ValueError("Labels should be a list of strings or integers")
+    elif isinstance(labels_config, str):
+        if ',' in labels_config:
+            labels = [l.strip() for l in labels_config.split(',')]
+        elif re.search(r'^[+-]?\d+\s?-\s?[+-]?\d+$', labels_config):
+            low_high = re.split(r'(?<=\d)\s?-\s?(?=[+-]?\d)', labels_config)
+            assert len(low_high) == 2, "Labels should be a string in the format '(±)<low> - (±)<high>'"
+            try: 
+                low_high = list(map(int, low_high))
+            except:
+                raise ValueError("Labels should be a string in the format '(±)<low> - (±)<high>'")
+            labels = list(map(str, list(range(low_high[0], low_high[1]+1))))
+        else: 
+            ValueError("if labels are specified as string, they should use comma separated list (for pairwise) or integer range in format '(±)<low> - (±)<high>' (for pointwise)")
+    elif isinstance(labels_config, dict):
+        assert "low" in labels_config and "high" in labels_config, "Labels should be a dict with keys 'low' and 'high'"
+        assert isinstance(labels_config["low"], (int, str)) and isinstance(labels_config["high"], (int, str)), "Labels should be a dict with keys 'low' and 'high' as integers"
+        if isinstance(labels_config["low"], str):
+            try:
+                labels_config["low"] = int(labels_config["low"])
+            except:
+                raise ValueError("Labels should be a dict with keys 'low' and 'high' as integers")
+        if isinstance(labels_config["high"], str):
+            try:
+                labels_config["high"] = int(labels_config["high"])
+            except:
+                raise ValueError("Labels should be a dict with keys 'low' and 'high' as integers")
+        assert labels_config["low"] < labels_config["high"], "For scoring, Label 'low' should be a smaller integer than label 'high'"
+        labels = list(map(str, list(range(labels_config["low"], labels_config["high"] + 1))))
+    else:
+        raise ValueError("Labels should be a list of strings or a string in the format 'low-high'")
+
+    return labels
 
 
 def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
@@ -133,14 +249,18 @@ def prepare_initial_data(config: dict,
 
 
 def run_inference(model,
-                query_texts,
-                batch_size,
-                outfile, 
-                id_values, 
-                id_key, 
-                api_model, 
-                dynamic_batching):
-
+                  query_texts,
+                  batch_size,
+                  outfile, 
+                  id_values, 
+                  id_key, 
+                  api_model, 
+                  dynamic_batching
+            ):
+    has_labels = hasattr(model, "label_id_map") and model.label_id_map 
+    if not has_labels:
+        print("Model does not have labels. Running inference without obtaining preferences")
+    
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
 
@@ -152,10 +272,21 @@ def run_inference(model,
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                batch_responses = model.generate_answer_batch(batch_query_texts)
-                for id_, response in zip(ids, batch_responses):
-                    f.write(json.dumps({id_key: id_, "response": response}) + '\n')
+                batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+                logprobs = get_logprobs(batched_output["scores"])
+                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
 
+                #import ipdb; ipdb.set_trace()
+
+                for item_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
+                    output = {
+                        id_key: item_id,
+                        "output": answer,
+                    }
+                    if preference:
+                        output["preferences"] = preference
+                    f.write(json.dumps(output) + "\n")
+                    
                 i += batch_size
                 pbar.update(batch_size)
 
@@ -163,10 +294,10 @@ def run_inference(model,
                     continue
 
                 unused_gpu_mem = get_unused_gpu_memory()
-                print("Unused GPU memory: ", unused_gpu_mem)
 
                 # if dynamic batching is turned on, increase batch size by 2 
                 if unused_gpu_mem > 40 and dynamic_batching:
+                    print("Unused GPU memory: ", unused_gpu_mem)
                     batch_size += 2
                     print(f"Increasing batch size to {batch_size}")
                     torch.cuda.empty_cache()
@@ -178,14 +309,23 @@ def run_inference(model,
                 if batch_size == 1: 
                     print("Batch size of 1 too large for GPU. Aborting")
 
-
-
                 batch_size = max(1, batch_size - 2)
                 print(f"Reducing batch size to {batch_size}")
                 torch.cuda.empty_cache()
 
+            except Exception as e:
+                print("An error occurred:")
+                print(e)
+                # NOTE: when an error arises in a batch, the while loop would continues infinitely so we break here
+                break
+
             if not api_model:
                 torch.cuda.empty_cache()
+
+    # report the length of the file 
+    with open(outfile, "r") as f:
+        lines = f.readlines()
+        print(f"Total lines written to {outfile}: {len(lines)}")
 
     pbar.close()
 
@@ -219,10 +359,17 @@ def few_shot_classifier(config: dict):
     api_model = model_family == "gpt"
 
     if not api_model:
-        display_gpu_status()
+        try:
+            display_gpu_status()
+        except:
+            print("could not call display_gpu_status")
 
     model_class = model_map[model_family]
-    model = model_class(model_name=model_name, model_details=model_params)
+    labels = config['prompt_details']['labels'] if 'labels' in config['prompt_details'] else None
+    if labels:
+        labels = parse_labels_config(labels)
+
+    model = model_class(model_name=model_name, model_details=model_params, labels=labels)
     print("Model loaded")
 
     if not api_model:
@@ -233,13 +380,12 @@ def few_shot_classifier(config: dict):
     id_values = [d[id_key] for d in dataset]
 
     run_inference(model, query_texts, batch_size, outfile, id_values, id_key, api_model, dynamic_batching)
-    reorder_output(outfile, config["dataset"]["path"], id_key)
+    #reorder_output(outfile, config["dataset"]["path"], id_key)
 
 
 def get_args():
     parser = argparse.ArgumentParser(description="Run few-shot classification on a dataset")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file")
-
     return parser
 
 def main():
@@ -247,3 +393,7 @@ def main():
     args = parser.parse_args()
     config = load_yaml(args.config)
     few_shot_classifier(config)
+
+
+if __name__ == "__main__": 
+    main()

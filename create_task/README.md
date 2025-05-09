@@ -31,6 +31,7 @@ Below find:
   --id_key ID_KEY   Column name for IDs (defaults to 'ID')
   --input_label		Column name for input items (defaults to 'question')
   --output_label	Column name for output items (defaults to 'answer')
+  --output_label_options  Specifies allowed answer options as (i) list of string or integer values or (ii) a string specifying a range like <lowest>-<highest> (defaults to None, open answer)
 
 # Info about the specific language model that will be used
   --model_details	YAML file with model details
@@ -73,6 +74,7 @@ python create_hf_fewshot_task.py \
   --id_key                       ID \
   --input_label                  question \
   --output_label                 answer \
+  --output_label_options         options \
   --model_details                model_details/model_details_gpt.yaml \
   --prompt_name                  qa_prompt \
   --instruction                  qa_example_task_data/instruction.txt \

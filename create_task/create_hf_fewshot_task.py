@@ -20,6 +20,8 @@
 #   
 #    --output_label  output_label    (defaults to 'answer')
 #
+#    --output_label_options  output_label_options    (defaults to None)
+#
 #    --prompt_name   prompt_name     (defaults to 'my_prompt')
 #
 #    --id_key        element name for data item IDs (defaults to 'ID')
@@ -198,6 +200,7 @@ def parse_args():
     parser.add_argument("--id_key", default="ID", help="Column name for IDs (defaults to 'ID')")
     parser.add_argument("--input_label", default="question", help="Column name for input items (defaults to 'question')")
     parser.add_argument("--output_label", default="answer", help="Column name for output items (defaults to 'answer')")
+    parser.add_argument("--output_label_options", type=str, default=None, nargs='+', help="Specifies allowed answer options as (i) list of string or integer values or (ii) a string specifying a range like <lowest>-<highest> (defaults to None, open answer)")
     parser.add_argument("--model_details", required=True, help="YAML file with model details")
     parser.add_argument("--prompt_name", default="my_prompt", help="Name of the prompt (defaults to 'my_prompt')")
     parser.add_argument("--instruction", required=True, help="Text file containing instruction part of the prompt")
@@ -210,6 +213,19 @@ def parse_args():
     parser.add_argument("--task_output_dir", help="Directory where LLM task output should go when hf_fewshot is called with this config")
     
     args = parser.parse_args()
+    
+    if args.output_label_options is None:
+        args.output_label_options = []
+    elif len(args.output_label_options) == 1:
+        if args.output_label_options[0] == "None":
+            args.output_label_options = []
+        elif ',' in args.output_label_options[0]:
+            args.output_label_options = args.output_label_options[0].split(',')
+        elif '-' in args.output_label_options[0]:
+            low, high = args.output_label_options[0].split('-')
+            args.output_label_options = list(range(int(low), int(high)+1))
+        else:
+            sys.stderr.write("Warning: output_label_options should be a list of string or integer values, or a string specifying a range like <lowest>-<highest>\n")
     
     if not os.path.isabs(args.output_dir):
         args.output_dir = os.path.abspath(args.output_dir)
@@ -294,7 +310,7 @@ def create_config_file(args, output_dir, task_output_dir):
             "path": prompt_path,
             "prompt_name": args.prompt_name,
             "output_var": args.output_label,
-            "labels": [],  # keep this empty for open labels
+            "labels": args.output_label_options,
             "input_vars": [args.input_label]
         },
         "dataset": {

@@ -1,23 +1,20 @@
-# FILEPATH: /fs/clip-political/rupak/hf-fewshot/configs/example_config.yaml
+# FILEPATH: hf_fewshot/configs/example_qna_config.yaml
 
 # Main header
 exemplars:
     use_exemplars: True
-    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_exemplars.jsonl
+    path: ../example_tasks/question_answering/exemplars.jsonl
     num_exemplars: 2
     shuffle: True
     seed: 42
 
 prompt_details: 
-    path: /fs/clip-political/rupak/hf-fewshot/example_task/md_prompt_example
+    path: ../example_tasks/question_answering/zero_shot
+    input_type: md
     prompt_name: question_answering_prompt
     output_var: answer
     labels:  # keep this empty for open labels
     input_vars: [question]
-    input_type: md
-    # input_type: json
-    # path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_prompt.json
-
     
 model_details:
     model_name: gpt-3.5-turbo
@@ -32,9 +29,9 @@ dataset:
     # the unique_id of each example
     dataset_name: test-qa-dataset
     id_key: q_id
-    path: /fs/clip-political/rupak/hf-fewshot/example_task/sample_dataset.jsonl
+    path: ../example_tasks/question_answering/dataset.jsonl
     
 output:
-    output_dir: /fs/clip-political/rupak/hf-fewshot/outputs
-    output_file: sample_output.jsonl
+    output_dir: ../outputs
+    output_file: sample_qna_output.jsonl
     task_name: simple-qa

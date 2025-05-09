@@ -20,6 +20,7 @@ setup(
         "bitsandbytes>=0.43.1",
         "sentencepiece>=0.2.0",
         "autoawq>=0.2.5", 
-        "pynvml>=11.5.3"
+        "pynvml>=11.5.3", 
+        "python-dotenv>=1.0.1"
     ]
 )

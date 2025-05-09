@@ -1,0 +1,2 @@
+Text: """{text}"""
+Score: {score}
