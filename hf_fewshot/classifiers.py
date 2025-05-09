@@ -344,8 +344,7 @@ def reorder_output(output_file, data_file, id_key):
     write_jsonlines(reordered_output, output_file)
 
 
-def few_shot_classifier(config_file: str):
-    config = load_yaml(config_file)
+def few_shot_classifier(config: dict):
     model_family = config["model_details"]["model_family"]
     model_name = config["model_details"]["model_name"]
     dynamic_batching = config["model_details"].get("dynamic_batching", False)
@@ -392,8 +391,8 @@ def get_args():
 def main():
     parser = get_args()
     args = parser.parse_args()
-    few_shot_classifier(args.config)
-
+    config = load_yaml(args.config)
+    few_shot_classifier(config)
 
 
 if __name__ == "__main__": 
