@@ -273,8 +273,14 @@ def run_inference(model,
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
                 batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
-                logprobs = get_logprobs(batched_output["scores"])
-                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
+                if api_model:
+                    preferences = [
+                        {lab: np.exp(logprobs.get(lab, np.nan)) for lab in model.label_id_map.keys()}  if has_labels else None
+                        for logprobs in batched_output["scores"]
+                    ]
+                else:
+                    logprobs = get_logprobs(batched_output["scores"])
+                    preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
 
                 #import ipdb; ipdb.set_trace()
 
