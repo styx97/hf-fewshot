@@ -128,6 +128,7 @@ class GPTFewShot:
     def __init__(self, 
                  model_name: str,
                  model_details: dict=None,
+                 labels: List[str]=None,
                  **kwargs # to absorb `labels` and other arguments
                 ):
         
@@ -143,8 +144,10 @@ class GPTFewShot:
         self.max_tokens = self.model_details['max_new_tokens']
         self.top_p = self.model_details.get("top_p", 1)
 
-        # setting default
-        self.label_id_map = {}
+        if labels and "scores" in model_details and model_details["scores"]:
+            self.label_id_map = {l: None for l in labels}
+            print("Label ID Map: ", self.label_id_map)
+        
 
     def generate_answer_debug(self, question_text: str):
         return self.client.chat.completions.create(
@@ -178,7 +181,7 @@ class GPTFewShot:
         
         return answer_texts
     
-    def generate_answer_batch_scores(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Mapping[str, float]]]:
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Mapping[str, float]]]:
         answer_texts = []
         top_logprobs = []
         
@@ -199,7 +202,7 @@ class GPTFewShot:
             # NOTE: not compatible with other model's logprobs output
             top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
         
-        return answer_texts, top_logprobs
+        return {"answers": answer_texts, "scores": top_logprobs}
             
 class HFFewShot:
     def __init__(self,
