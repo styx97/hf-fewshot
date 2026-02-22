@@ -15,27 +15,38 @@ def get_unused_gpu_memory():
     Returns:
         int: Unused GPU memory in MB.
     """
-    pynvml.nvmlInit()
-    device_count = pynvml.nvmlDeviceGetCount()
-    total_unused_memory = 0
-    total_available_memory  = 0
+    try:
+        pynvml.nvmlInit()
+    except pynvml.NVMLError:
+        return 0
     
-    for i in range(device_count):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        total_memory = info.total // 1024 ** 2  # Convert bytes to MB
-        used_memory = info.used // 1024 ** 2   # Convert bytes to MB
-        unused_memory = total_memory - used_memory
-        total_unused_memory += unused_memory
-        total_available_memory += total_memory
+    try:
+        device_count = pynvml.nvmlDeviceGetCount()
+        total_unused_memory = 0
+        total_available_memory  = 0
         
-    pynvml.nvmlShutdown()
-    return round((total_unused_memory / total_available_memory) * 100, 5)
+        for i in range(device_count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            total_memory = info.total // 1024 ** 2  # Convert bytes to MB
+            used_memory = info.used // 1024 ** 2   # Convert bytes to MB
+            unused_memory = total_memory - used_memory
+            total_unused_memory += unused_memory
+            total_available_memory += total_memory
+            
+        pynvml.nvmlShutdown()
+        return round((total_unused_memory / total_available_memory) * 100, 5)
+    except pynvml.NVMLError:
+        return 0
 
 
 def display_gpu_status():
     # Initialize NVML
-    pynvml.nvmlInit()
+    try:
+        pynvml.nvmlInit()
+    except pynvml.NVMLError:
+        print("No NVIDIA GPUs found on this machine.")
+        return
     
     try:
         # Get the number of GPUs in the system
@@ -200,6 +211,32 @@ class GPTFewShot:
             top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
         
         return answer_texts, top_logprobs
+    
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Tuple]]:
+        """
+        Generate answers with logprobs for batch processing.
+        Returns dictionary with 'answers' and 'scores' keys to match HFFewShot interface.
+        """
+        answer_texts = []
+        top_logprobs = []
+        
+        for message in message_objects:
+            response = self.client.chat.completions.create(
+                model=self.model, 
+                messages=message,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+                logprobs=True,
+                top_logprobs=20
+            )
+            answer_text = response.choices[0].message.content
+            answer_texts.append(answer_text)
+
+            label_logprobs = response.choices[0].logprobs.content[0]
+            top_logprobs.append({tok.token: tok.logprob for tok in label_logprobs.top_logprobs})
+        
+        return {"answers": answer_texts, "scores": tuple(top_logprobs)}
             
 class HFFewShot:
     def __init__(self,
@@ -213,7 +250,7 @@ class HFFewShot:
         standard set of parameters. 
         """
         
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, padding_side='left')
         if model_details is None:
             model_details = {}
         
@@ -294,6 +331,36 @@ class HFFewShot:
         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         
         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+    
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> Mapping[str, Union[List[str], Tuple[torch.FloatTensor]]]:
+        """
+        Code to batch process multiple questions with logprobs.
+        """
+        messages = [
+            self.tokenizer.apply_chat_template(messages, tokenize=False) 
+            for messages in message_objects
+        ]
+
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+
+        outputs = self.model.generate(
+            **model_inputs, 
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
+            temperature=self.temperature if self.do_sample else None,
+            pad_token_id=self.tokenizer.eos_token_id,
+            return_dict_in_generate=True, 
+            output_scores=True
+        )
+
+        answer_texts = self.tokenizer.batch_decode(
+            outputs.sequences[:, model_inputs.input_ids.shape[-1]:], 
+            skip_special_tokens=True
+        )
+
+        return {"answers": answer_texts, "scores": outputs.scores}
     
     @staticmethod
     def _prompt_to_messages(
