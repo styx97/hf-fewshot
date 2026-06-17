@@ -86,11 +86,9 @@ def labels_vocab_id_map(tokenizer, labels: List[str]) -> Mapping[str, List[int]]
     """
     Create a mapping of labels to their tokenized ids.
     """
-    # if the labels are not a list of strings, make it so 
-    labels = map(lambda x: str(x).strip(), labels) # ensure all labels are strings and stripped of whitespace
-
+    labels = map(lambda x: str(x).strip(), labels)
     label_id_map = {}
-    for label in labels: 
+    for label in labels:
         ids = tokenizer.encode(label, add_special_tokens=False)
         label_id_map[label] = ids
     return label_id_map
@@ -125,16 +123,14 @@ class GPTFewShot:
     The openai key is fetched from the env variable OPENAI_API_KEY
     """
 
-    def __init__(self, 
+    def __init__(self,
                  model_name: str,
                  model_details: dict=None,
-                 **kwargs # to absorb `labels` and other arguments
+                 **kwargs  # absorbs `labels` and other keyword args
                 ):
-        
         if not os.environ.get("OPENAI_API_KEY"):
             raise ValueError("OPENAI_API_KEY not set in environment variables")
-        
-        self.model = model_name 
+        self.model = model_name
         self.model_details = model_details
         # if no model details are provided, set defaults
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -292,7 +288,7 @@ class HFFewShot:
         )
 
         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        
+
         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
     
     @staticmethod
@@ -311,6 +307,10 @@ class HFFewShot:
         messages.append({"role": "user", "content": prompt})
         
         return messages
+
+    def generate_answer_batch_logprobs(self, query_texts: list) -> dict:
+        """Fallback for models that don't override this — no scores returned."""
+        return {"answers": self.generate_answer_batch(query_texts), "scores": ()}
 
 
 class Gemma2FewShot(HFFewShot):
@@ -410,12 +410,11 @@ class Gemma2FewShot(HFFewShot):
 
 
 class LlamaFewShot(HFFewShot):
-    def __init__(self, 
-                 model_name: str, 
+    def __init__(self,
+                 model_name: str,
                  model_details: dict=None,
                  labels: List[str]=None
                 ):
-        
         super().__init__(model_name, model_details, labels)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -424,8 +423,7 @@ class LlamaFewShot(HFFewShot):
             self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         ]
         self.terminators = list(set(t for t in self.terminators if t))
-        
-    
+
     def generate_answer(self, message_object: List[Dict]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
@@ -544,9 +542,65 @@ class LlamaFewShot(HFFewShot):
 
         return answer_texts
 
+class Qwen3FewShot(LlamaFewShot):
+    """Qwen3 variant: disables thinking mode and uses the correct EOS token."""
+
+    def _apply_chat_template(self, messages, tokenize=False):
+        kwargs = {"add_generation_prompt": True, "tokenize": tokenize}
+        try:
+            return self.tokenizer.apply_chat_template(messages, enable_thinking=False, **kwargs)
+        except TypeError:
+            return self.tokenizer.apply_chat_template(messages, **kwargs)
+
+    def generate_answer(self, message_object: List[Dict]) -> str:
+        message = self._apply_chat_template(message_object, tokenize=False)
+        model_input = self.tokenizer(message, return_tensors="pt", padding=True).to(self.model.device)
+        outputs = self.model.generate(
+            **model_input,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
+            eos_token_id=self.tokenizer.eos_token_id,
+            temperature=self.temperature if self.do_sample else None,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+        return self.tokenizer.decode(outputs[0, model_input["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
+
+    def generate_answer_batch(self, message_objects: List[Dict]) -> List[str]:
+        messages = [self._apply_chat_template(m, tokenize=False) for m in message_objects]
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+        outputs = self.model.generate(
+            **model_inputs,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.do_sample,
+            eos_token_id=self.tokenizer.eos_token_id,
+            temperature=self.temperature if self.do_sample else None,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+        return self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+
+    def generate_answer_batch_logprobs(self, message_objects: List[Dict]) -> dict:
+        messages = [self._apply_chat_template(m, tokenize=False) for m in message_objects]
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+        eos_id = self.tokenizer.eos_token_id
+        outputs = self.model.generate(
+            **model_inputs,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=False,
+            eos_token_id=eos_id,
+            pad_token_id=eos_id,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+        answer_texts = self.tokenizer.batch_decode(
+            outputs.sequences[:, model_inputs.input_ids.shape[-1]:],
+            skip_special_tokens=True,
+        )
+        return {"answers": answer_texts, "scores": outputs.scores}
+
+
 class Gwen2FewShot(HFFewShot):
-    def __init__(self, 
-                 model_name: str, 
+    def __init__(self,
+                 model_name: str,
                  model_details: dict=None,
                  labels: List[str]=None
                 ):

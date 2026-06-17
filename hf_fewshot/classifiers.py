@@ -8,16 +8,17 @@ import argparse
 
 import torch
 from hf_fewshot.models import (
-    # MistralFewShot,
+    MistralFewShot,
     HFFewShot,
     LlamaFewShot,
     GPTFewShot,
     Gemma2FewShot,
     Gwen2FewShot,
     Gemma3FewShot,
+    Qwen3FewShot,
     display_gpu_status,
-    get_unused_gpu_memory, 
-    get_logsoftmax
+    get_unused_gpu_memory,
+    get_logsoftmax,
 )
 
 from hf_fewshot.prompting_utils import (
@@ -25,18 +26,20 @@ from hf_fewshot.prompting_utils import (
     load_yaml,
     load_jsonlines,
     load_json,
-    write_jsonlines, 
+    write_jsonlines,
     read_md
 )
 
 model_map = {
+    "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
     "qwen2": Gwen2FewShot,
+    "qwen3": Qwen3FewShot,
+    "gemma": Gemma2FewShot,   # backward-compat alias
     "gemma2": Gemma2FewShot,
     "gemma3": Gemma3FewShot,
-    # "mistral": MistralFewShot,
 }
 
 def get_option_preferences(model: LlamaFewShot, 
@@ -165,7 +168,7 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
         prompts = load_json(prompt_path)
         prompt = prompts[config["prompt_details"]["prompt_name"]]
 
-    elif prompt_details['input_type'] == "md":
+    elif prompt_details['input_type'] in ("md", "md_folder"):
         # in this case, read the md files and return the content
         # filepath/zero_shot.md and filepath/followup.md
         zero_shot_filepath = prompt_path / "zero_shot.md"
@@ -248,41 +251,80 @@ def prepare_initial_data(config: dict,
     return query_texts, dataset, id_key
 
 
+def get_logprobs(scores):
+    """
+    Convert raw generation scores to a (batch, steps, vocab) numpy array of log-probs.
+    scores: tuple of (batch_size, vocab_size) tensors, one per generated token.
+    """
+    batch_size = scores[0].shape[0]
+    logprobs = []
+    for index in range(batch_size):
+        curr_logprobs = []
+        for token_output in scores:
+            curr_logprobs.append(get_logsoftmax(token_output[index])[0].detach().cpu().numpy())
+        logprobs.append(curr_logprobs)
+    return np.array(logprobs)
+
+
+def get_option_preferences(model, logprobs: np.ndarray, options: list) -> list:
+    """
+    For each example in the batch, compute a probability for each label option.
+    Uses position-0 logits for all tokens in each (possibly multi-token) label,
+    sums log-probs, then exponentiates to get a probability.
+    Works for single-token labels (e.g. "1"–"5") and multi-token labels (e.g. "Text A").
+    """
+    option_token_dict = {
+        option: model.tokenizer.encode(option, add_special_tokens=False)
+        for option in options
+    }
+    preferences = []
+    for index in range(logprobs.shape[0]):
+        option_logprobs = {
+            option: logprobs[index, 0, option_token_dict[option]]
+            for option in options
+        }
+        option_probs = {
+            option: float(np.exp(lp.sum()))
+            for option, lp in option_logprobs.items()
+        }
+        preferences.append(option_probs)
+    return preferences
+
+
 def run_inference(model,
                   query_texts,
                   batch_size,
-                  outfile, 
-                  id_values, 
-                  id_key, 
-                  api_model, 
+                  outfile,
+                  id_values,
+                  id_key,
+                  api_model,
                   dynamic_batching
             ):
-    has_labels = hasattr(model, "label_id_map") and model.label_id_map 
+    has_labels = hasattr(model, "label_id_map") and model.label_id_map
+    use_logprobs = has_labels and hasattr(model, "generate_answer_batch_logprobs")
     if not has_labels:
         print("Model does not have labels. Running inference without obtaining preferences")
-    
+
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
-
     print("Writing responses to: ", outfile)
-    
+
     with open(outfile, "a+") as f:
         i = 0
         while i < len(query_texts):
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
-                logprobs = get_logprobs(batched_output["scores"])
-                preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
-
-                #import ipdb; ipdb.set_trace()
-
-                for item_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
-                    output = {
-                        id_key: item_id,
-                        "output": answer,
-                    }
+                if use_logprobs:
+                    batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+                    logprobs = get_logprobs(batched_output["scores"])
+                    preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys()))
+                    answers = batched_output["answers"]
+                else:
+                    answers = model.generate_answer_batch(batch_query_texts)
+                    preferences = [None] * len(ids)
+                for item_id, answer, preference in zip(ids, answers, preferences):
+                    output = {id_key: item_id, "response": answer}
                     if preference:
                         output["preferences"] = preference
                     f.write(json.dumps(output) + "\n")
@@ -365,7 +407,7 @@ def few_shot_classifier(config: dict):
             print("could not call display_gpu_status")
 
     model_class = model_map[model_family]
-    labels = config['prompt_details']['labels'] if 'labels' in config['prompt_details'] else None
+    labels = config['prompt_details'].get('labels') or None
     if labels:
         labels = parse_labels_config(labels)
 
