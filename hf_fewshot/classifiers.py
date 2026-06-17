@@ -13,7 +13,8 @@ from hf_fewshot.models import (
     GemmaFewShot,
     Qwen3FewShot,
     display_gpu_status,
-    get_unused_gpu_memory
+    get_unused_gpu_memory,
+    get_logsoftmax,
 )
 
 from hf_fewshot.prompting_utils import (
@@ -51,7 +52,7 @@ def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
         prompts = load_json(prompt_path)
         prompt = prompts[config["prompt_details"]["prompt_name"]]
 
-    elif prompt_details['input_type'] == "md":
+    elif prompt_details['input_type'] in ("md", "md_folder"):
         # in this case, read the md files and return the content
         # filepath/zero_shot.md and filepath/followup.md
         zero_shot_filepath = prompt_path / "zero_shot.md"
@@ -134,29 +135,81 @@ def prepare_initial_data(config: dict,
     return query_texts, dataset, id_key
 
 
+def get_logprobs(scores):
+    """
+    Convert raw generation scores to a (batch, steps, vocab) numpy array of log-probs.
+    scores: tuple of (batch_size, vocab_size) tensors, one per generated token.
+    """
+    batch_size = scores[0].shape[0]
+    logprobs = []
+    for index in range(batch_size):
+        curr_logprobs = []
+        for token_output in scores:
+            curr_logprobs.append(get_logsoftmax(token_output[index])[0].detach().cpu().numpy())
+        logprobs.append(curr_logprobs)
+    return np.array(logprobs)
+
+
+def get_option_preferences(model, logprobs: np.ndarray, options: list) -> list:
+    """
+    For each example in the batch, compute a probability for each label option.
+    Uses position-0 logits for all tokens in each (possibly multi-token) label,
+    sums log-probs, then exponentiates to get a probability.
+    Works for single-token labels (e.g. "1"–"5") and multi-token labels (e.g. "Text A").
+    """
+    option_token_dict = {
+        option: model.tokenizer.encode(option, add_special_tokens=False)
+        for option in options
+    }
+    preferences = []
+    for index in range(logprobs.shape[0]):
+        option_logprobs = {
+            option: logprobs[index, 0, option_token_dict[option]]
+            for option in options
+        }
+        option_probs = {
+            option: float(np.exp(lp.sum()))
+            for option, lp in option_logprobs.items()
+        }
+        preferences.append(option_probs)
+    return preferences
+
+
 def run_inference(model,
                 query_texts,
                 batch_size,
-                outfile, 
-                id_values, 
-                id_key, 
-                api_model, 
+                outfile,
+                id_values,
+                id_key,
+                api_model,
                 dynamic_batching):
+
+    has_labels = hasattr(model, "label_id_map") and model.label_id_map
+    use_logprobs = has_labels and hasattr(model, "generate_answer_batch_logprobs")
 
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
-
     print("Writing responses to: ", outfile)
-    
+
     with open(outfile, "a+") as f:
         i = 0
         while i < len(query_texts):
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                batch_responses = model.generate_answer_batch(batch_query_texts)
-                for id_, response in zip(ids, batch_responses):
-                    f.write(json.dumps({id_key: id_, "response": response}) + '\n')
+                if use_logprobs:
+                    batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+                    logprobs = get_logprobs(batched_output["scores"])
+                    preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys()))
+                    answers = batched_output["answers"]
+                else:
+                    answers = model.generate_answer_batch(batch_query_texts)
+                    preferences = [{}] * len(ids)
+                for id_, response, prefs in zip(ids, answers, preferences):
+                    record = {id_key: id_, "response": response}
+                    if prefs:
+                        record["preferences"] = prefs
+                    f.write(json.dumps(record) + '\n')
 
                 i += batch_size
                 pbar.update(batch_size)
@@ -224,7 +277,17 @@ def few_shot_classifier(config: dict):
         display_gpu_status()
 
     model_class = model_map[model_family]
-    model = model_class(model_name=model_name, model_details=model_params)
+
+    labels = config["prompt_details"].get("labels") or None
+    if labels is not None:
+        if isinstance(labels, str):
+            labels = dict(zip(["low", "high"], labels.split("-")))
+        if isinstance(labels, dict):
+            labels = list(map(str, range(labels["low"], labels["high"] + 1)))
+        assert isinstance(labels, list), "labels must resolve to a list"
+        labels = [str(l) for l in labels]
+
+    model = model_class(model_name=model_name, model_details=model_params, labels=labels)
     print("Model loaded")
 
     if not api_model:

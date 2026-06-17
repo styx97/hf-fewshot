@@ -1,4 +1,5 @@
 import choix
+import math
 from collections import defaultdict
 import re
 from hf_fewshot.prompting_utils import load_jsonlines, load_yaml, write_jsonlines
@@ -150,6 +151,7 @@ def debias_pairwise_results(
     all_results: list,
     outcome_map: dict = {1: "Q1", 2: "Q2", 3: "Tie", 4: "NONE"},
     expand_options: callable = default_expand_options,
+    tie_on_disagree: bool = True,
 ) -> list:
     """
     Remove position-order bias by comparing each pair against its swapped
@@ -167,10 +169,13 @@ def debias_pairwise_results(
     In the original run:  key=1 → id1 wins,  key=2 → id2 wins.
     In the swapped run:   key=1 → id2 wins,  key=2 → id1 wins  (labels are flipped).
 
-    Agreement  = (orig=1 ∧ swap=2)  OR  (orig=2 ∧ swap=1)  → same item won both ways → keep
-    Disagreement = (orig=1 ∧ swap=1) OR  (orig=2 ∧ swap=2) → position drove the choice → drop
-    Tie / NONCOMP on either side                            → propagate as-is (no flip needed)
-    Only one ordering available                             → keep as-is (can't debias)
+    Agreement    = (orig=1 ∧ swap=2) OR (orig=2 ∧ swap=1) → same item won both ways → keep
+    Disagreement = (orig=1 ∧ swap=1) OR (orig=2 ∧ swap=2) → position drove the choice.
+                   If tie_on_disagree=True (default): record as Tie — the two runs give
+                   contradictory evidence, so "roughly equal" is the best estimate.
+                   If tie_on_disagree=False: drop entirely.
+    Tie / NONCOMP on either side                           → propagate as-is
+    Only one ordering available                            → keep as-is (can't debias)
 
     Returns a list of debiased results in original-pair format only (no "__"
     entries), safe to pass directly into clean_pairwise_results.
@@ -185,7 +190,9 @@ def debias_pairwise_results(
             original[r['id']] = r
 
     debiased = []
-    n_agree = n_disagree = n_single = n_skip = 0
+    n_agree = n_disagree_tie = n_disagree_drop = n_single = n_skip = 0
+
+    tie_label = outcome_map.get(3, "Tie")
 
     for key, orig_r in original.items():
         swap_r = swapped_map.get(key)
@@ -202,7 +209,7 @@ def debias_pairwise_results(
             n_skip += 1
             continue
 
-        # Tie or NONCOMP on either side — keep the original result unchanged
+        # Tie or NONCOMP on either side — propagate the original result unchanged
         if orig_key in (3, 4) or swap_key in (3, 4):
             debiased.append(orig_r)
             n_agree += 1
@@ -213,7 +220,29 @@ def debias_pairwise_results(
             debiased.append(orig_r)
             n_agree += 1
         else:
-            n_disagree += 1  # position drove the result — discard
+            # Position drove a contradiction — try to resolve with pooled logprobs.
+            # orig run: text1=id1, text2=id2  → key 1 means id1 wins, key 2 means id2 wins
+            # swap run: text1=id2, text2=id1  → key 1 means id2 wins, key 2 means id1 wins
+            # So evidence for id1 winning = P_orig(Text A) + P_swap(Text B) in log-prob space
+            orig_prefs = orig_r.get('preferences')
+            swap_prefs = swap_r.get('preferences')
+            if orig_prefs and swap_prefs:
+                label1 = outcome_map.get(1, "Text A")
+                label2 = outcome_map.get(2, "Text B")
+                # preferences are regular probabilities (floats)
+                # pool: evidence for id1 winning = P_orig(Text A) * P_swap(Text B)
+                p_id1_wins = orig_prefs.get(label1, 0.0) * swap_prefs.get(label2, 0.0)
+                p_id2_wins = orig_prefs.get(label2, 0.0) * swap_prefs.get(label1, 0.0)
+                if p_id1_wins > p_id2_wins:
+                    debiased.append({'id': key, 'response': label1, 'preferences': orig_prefs})
+                else:
+                    debiased.append({'id': key, 'response': label2, 'preferences': orig_prefs})
+                n_disagree_tie += 1  # count as resolved-from-disagree
+            elif tie_on_disagree:
+                debiased.append({'id': key, 'response': tie_label})
+                n_disagree_tie += 1
+            else:
+                n_disagree_drop += 1
 
     # Handle pairs that appear only in swapped form (rare): flip and add
     for canonical, swap_r in swapped_map.items():
@@ -229,7 +258,9 @@ def debias_pairwise_results(
             n_single += 1
 
     print(
-        f"Debiasing: {n_agree} agreed (kept), {n_disagree} disagreed (dropped), "
+        f"Debiasing: {n_agree} agreed (kept), "
+        f"{n_disagree_tie} disagreed → resolved via logprobs (or Tie if no logprobs), "
+        f"{n_disagree_drop} disagreed → dropped, "
         f"{n_single} single-run (kept as-is), {n_skip} unparseable (dropped)"
     )
     return debiased

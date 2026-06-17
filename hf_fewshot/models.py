@@ -81,17 +81,10 @@ def display_gpu_status():
         # Make sure NVML is always shutdown
         pynvml.nvmlShutdown()
 
-def labels_vocab_id_map(tokenizer, labels): 
-    label_id_map = {}
-    for label in labels: 
-        ids = tokenizer.encode(label, skip_special_tokens=True)
-        if len(ids) > 1: 
-            raise ValueError("Label should not be breakable")
-            # TODO: For breakable words, logprob is just the sum of subword logprobs
-            # implement that sometime later
-        label_id_map[label] = ids[1]
-    
-    return label_id_map
+def labels_vocab_id_map(tokenizer, labels):
+    """Map each label string to its list of token IDs (no special tokens)."""
+    labels = [str(l).strip() for l in labels]
+    return {label: tokenizer.encode(label, add_special_tokens=False) for label in labels}
 
 def get_logsoftmax(x): 
     m = torch.nn.LogSoftmax(dim=1)
@@ -285,8 +278,12 @@ class HFFewShot:
         )
 
         answer_texts = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        
+
         return [answer_text.split("[/INST]")[-1].strip() for answer_text in answer_texts]
+
+    def generate_answer_batch_logprobs(self, query_texts: list) -> dict:
+        """Fallback for models that don't override this — no scores returned."""
+        return {"answers": self.generate_answer_batch(query_texts), "scores": ()}
 
 
 class GemmaFewShot(HFFewShot):
@@ -364,14 +361,21 @@ class GemmaFewShot(HFFewShot):
 
 
 class LlamaFewShot(HFFewShot):
-    def __init__(self, 
-                model_name: str, 
-                model_details: dict=None):
-        
+    def __init__(self,
+                model_name: str,
+                model_details: dict=None,
+                labels: list=None):
+
         super().__init__(model_name, model_details)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.tokenizer.pad_token = self.tokenizer.eos_token
-    
+
+        if labels and model_details.get("scores"):
+            self.label_id_map = labels_vocab_id_map(self.tokenizer, labels)
+            print("Label ID Map: ", self.label_id_map)
+        else:
+            self.label_id_map = {}
+
     def generate_answer(self, query_text: list[str]) -> str:
         """
         Code to process a single list of conversational history and generate the answer.
@@ -450,6 +454,41 @@ class LlamaFewShot(HFFewShot):
         answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
         return answer_texts
 
+    def generate_answer_batch_logprobs(self, query_texts: list) -> dict:
+        """
+        Like generate_answer_batch but also returns raw generation scores for
+        computing per-label log probabilities.  Returns {"answers": [...], "scores": (...)}.
+        """
+        messages = [
+            self.tokenizer.apply_chat_template(
+                msgs, add_generation_prompt=True, tokenize=False
+            )
+            for msgs in query_texts
+        ]
+        model_inputs = self.tokenizer(
+            messages, return_tensors="pt", padding=True
+        ).to(self.model.device)
+
+        terminators = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+        ]
+        outputs = self.model.generate(
+            **model_inputs,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=False,
+            eos_token_id=terminators,
+            pad_token_id=self.tokenizer.eos_token_id,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+        answer_texts = self.tokenizer.batch_decode(
+            outputs.sequences[:, model_inputs.input_ids.shape[-1]:],
+            skip_special_tokens=True,
+        )
+        return {"answers": answer_texts, "scores": outputs.scores}
+
+
 class Qwen3FewShot(LlamaFewShot):
     """Qwen3 variant: disables thinking mode and uses the correct EOS token."""
 
@@ -487,6 +526,25 @@ class Qwen3FewShot(LlamaFewShot):
             pad_token_id=eos_id,
         )
         return self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+
+    def generate_answer_batch_logprobs(self, query_texts: list) -> dict:
+        messages = [self._apply_chat_template(m, tokenize=False) for m in query_texts]
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to(self.model.device)
+        eos_id = self.tokenizer.eos_token_id
+        outputs = self.model.generate(
+            **model_inputs,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=False,
+            eos_token_id=eos_id,
+            pad_token_id=eos_id,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+        answer_texts = self.tokenizer.batch_decode(
+            outputs.sequences[:, model_inputs.input_ids.shape[-1]:],
+            skip_special_tokens=True,
+        )
+        return {"answers": answer_texts, "scores": outputs.scores}
 
 
 class MistralFewShot:
