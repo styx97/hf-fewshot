@@ -130,15 +130,13 @@ class GPTFewShot:
     a class the calls an openai model to generate text
     The openai key is fetched from the env variable OPENAI_API_KEY
     """
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY not set in environment variables")
-    
 
-    def __init__(self, 
+    def __init__(self,
                  model_name: str,
                 model_details: dict=None):
-        
-        self.model = model_name 
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY not set in environment variables")
+        self.model = model_name
         self.model_details = model_details
         # if no model details are provided, set defaults
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -451,6 +449,45 @@ class LlamaFewShot(HFFewShot):
 
         answer_texts = self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
         return answer_texts
+
+class Qwen3FewShot(LlamaFewShot):
+    """Qwen3 variant: disables thinking mode and uses the correct EOS token."""
+
+    def _apply_chat_template(self, messages, tokenize=False):
+        kwargs = {"add_generation_prompt": True, "tokenize": tokenize}
+        try:
+            return self.tokenizer.apply_chat_template(messages, enable_thinking=False, **kwargs)
+        except TypeError:
+            return self.tokenizer.apply_chat_template(messages, **kwargs)
+
+    def generate_answer(self, query_text):
+        message = self._apply_chat_template(query_text, tokenize=False)
+        model_input = self.tokenizer(message, return_tensors="pt", padding=True).to("cuda")
+        eos_id = self.tokenizer.eos_token_id
+        outputs = self.model.generate(
+            **model_input,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.temperature > 0,
+            eos_token_id=eos_id,
+            temperature=self.temperature if self.temperature > 0 else None,
+            pad_token_id=eos_id,
+        )
+        return self.tokenizer.decode(outputs[0, model_input["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
+
+    def generate_answer_batch(self, query_texts):
+        messages = [self._apply_chat_template(m, tokenize=False) for m in query_texts]
+        model_inputs = self.tokenizer(messages, return_tensors="pt", padding=True).to("cuda")
+        eos_id = self.tokenizer.eos_token_id
+        outputs = self.model.generate(
+            **model_inputs,
+            max_new_tokens=self.max_new_tokens,
+            do_sample=self.temperature > 0,
+            eos_token_id=eos_id,
+            temperature=self.temperature if self.temperature > 0 else None,
+            pad_token_id=eos_id,
+        )
+        return self.tokenizer.batch_decode(outputs[:, model_inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+
 
 class MistralFewShot:
     def __init__(self, 

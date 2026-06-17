@@ -11,6 +11,7 @@ from hf_fewshot.models import (
     LlamaFewShot,
     GPTFewShot,
     GemmaFewShot,
+    Qwen3FewShot,
     display_gpu_status,
     get_unused_gpu_memory
 )
@@ -20,7 +21,7 @@ from hf_fewshot.prompting_utils import (
     load_yaml,
     load_jsonlines,
     load_json,
-    write_jsonlines, 
+    write_jsonlines,
     read_md
 )
 
@@ -29,7 +30,8 @@ model_map = {
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
-    "gemma": GemmaFewShot
+    "gemma": GemmaFewShot,
+    "qwen3": Qwen3FewShot,
 }
 
 

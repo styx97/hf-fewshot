@@ -111,45 +111,59 @@ def create_pairwise_dataset(
         num_comps: int,
         id_key: str = "id",
         text_key: str = "text",
-): 
+        swap_pairs: bool = False,
+):
     """
-    Create a pairwise dataset from a list of items. 
+    Create a pairwise dataset from a list of items.
     Args:
         items (list): A list of items to compare. Each item should be a dictionary with an id_key and text_key.
         output_file (str): The output file path for the pairwise dataset.
         num_comps (int): The number of comparisons each item should be included in.
         id_key (str, optional): The key in the item dictionary that represents the item's ID. Defaults to "id".
         text_key (str, optional): The key in the item dictionary that represents the item's text. Defaults to "text".
+        swap_pairs (bool, optional): If True, each pair is also added in reversed order (text1 and text2 swapped).
+            The swapped entry has id "{id2}__{id1}" (double underscore) so it can be linked back to its original.
+            Useful for position-effect debiasing: compare forward and backward runs for the same pair.
+            Defaults to False.
     """
-    
-    # TODO: 
+
+    # TODO:
     # first, find out if there are repeated elements in the items list
     # if so, create unique items out of them so that they are not repeated in the pairwise comparisons
-    # note the frequency of each item 
-    
+    # note the frequency of each item
+
     num_items = len(items)
-    
 
     # Generate pairs
     selected_pairs, array_count = sample_random_pairs(num_items, num_comps)
-    
+
     # Create pairwise dataset
     pairwise_data = []
     for pair in selected_pairs:
         item1 = items[pair[0]]
         item2 = items[pair[1]]
         id1, id2 = str(item1[id_key]), str(item2[id_key])
-        
+
         pairwise_data.append({
-            "id": f"{id1}_{id2}",  
+            "id": f"{id1}_{id2}",
             "id1": id1,
             "text1": item1[text_key],
             "id2": id2,
             "text2": item2[text_key],
         })
-    
+
+        if swap_pairs:
+            # double-underscore separator marks this as a swapped entry
+            pairwise_data.append({
+                "id": f"{id2}__{id1}",
+                "id1": id2,
+                "text1": item2[text_key],
+                "id2": id1,
+                "text2": item1[text_key],
+            })
+
     # Write to file
     write_jsonlines(pairwise_data, output_file)
-    print(f"Pairwise dataset saved to: {output_file}")
+    print(f"Pairwise dataset saved to: {output_file} ({len(pairwise_data)} pairs, swap_pairs={swap_pairs})")
 
 
