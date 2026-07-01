@@ -25,11 +25,16 @@ model_details:
     max_new_tokens: 10
     temperature: 0.01
     
-# The dataset should be a jsonlines file with keys that are of the following type 
+# The dataset may be a .jsonl or .csv file (format auto-detected from the extension;
+# CSV columns become record fields). Override with `format: csv | jsonlines` if needed.
 dataset:
     # the unique_id of each example
     dataset_name: test-scoring-dataset
     id_key: id
+    # text_key (optional): the field holding the text, exposed to the prompt as
+    # {text}. Set it when the field isn't literally named "text". Works the same
+    # in csv and jsonl mode. Omit to require a field already named "text".
+    # text_key: text
     path: ../example_tasks/scoring/dataset.jsonl
     
 output:

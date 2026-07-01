@@ -8,68 +8,150 @@ import argparse
 
 import torch
 from hf_fewshot.models import (
-    MistralFewShot,
+    # MistralFewShot,
     HFFewShot,
     LlamaFewShot,
     GPTFewShot,
     Gemma2FewShot,
     Gwen2FewShot,
-    Gemma3FewShot,
     Qwen3FewShot,
+    Gemma3FewShot,
     display_gpu_status,
     get_unused_gpu_memory,
-    get_logsoftmax,
+    get_logsoftmax
 )
 
 from hf_fewshot.prompting_utils import (
     prep_prompt,
+    resolve_text_key,
     load_yaml,
     load_jsonlines,
+    load_records,
     load_json,
     write_jsonlines,
     read_md
 )
 
 model_map = {
-    "mistral": MistralFewShot,
     "hf-general": HFFewShot,
     "llama": LlamaFewShot,
     "gpt": GPTFewShot,
     "qwen2": Gwen2FewShot,
     "qwen3": Qwen3FewShot,
-    "gemma": Gemma2FewShot,   # backward-compat alias
     "gemma2": Gemma2FewShot,
     "gemma3": Gemma3FewShot,
+    # "mistral": MistralFewShot,
 }
 
-def get_option_preferences(model: LlamaFewShot, 
-                           logprobs: np.array, 
-                           options: list[str]) -> np.array: 
-    """
-    Given the logprobs of the options, find the model preferences for each option
-    """
 
-    # NOTE: keep all tokens for multi-token options
+def get_weighted_numeric_score(preference: dict[str, float] | None) -> float | None:
+    """
+    Compute a weighted numeric score from label probabilities.
+
+    This expects labels that can be cast to floats (e.g., "1"-"5").
+    Returns None when labels are non-numeric or probabilities are invalid.
+    """
+    if not preference:
+        return None
+
+    weighted_sum = 0.0
+    total_prob = 0.0
+
+    for label, prob in preference.items():
+        try:
+            label_value = float(label)
+            prob_value = float(prob)
+        except (TypeError, ValueError):
+            # Non-numeric labels are not supported for weighted numeric score.
+            return None
+
+        if not np.isfinite(prob_value) or prob_value < 0:
+            continue
+
+        weighted_sum += label_value * prob_value
+        total_prob += prob_value
+
+    if total_prob <= 0:
+        return None
+
+    return weighted_sum / total_prob
+
+
+def normalize_label_logprobs(label_logprobs: dict[str, float]) -> dict[str, float]:
+    """
+    Convert per-label logprobs into probabilities normalized over the provided labels.
+
+    Labels with non-finite logprobs receive probability 0.
+    """
+    if not label_logprobs:
+        return {}
+
+    labels = list(label_logprobs.keys())
+    logprob_values = np.array([label_logprobs[label] for label in labels], dtype=float)
+    finite_mask = np.isfinite(logprob_values)
+
+    if not finite_mask.any():
+        return {label: 0.0 for label in labels}
+
+    normalized = np.zeros_like(logprob_values, dtype=float)
+    finite_values = logprob_values[finite_mask]
+    max_logprob = np.max(finite_values)
+    exp_values = np.exp(finite_values - max_logprob)
+    denom = exp_values.sum()
+
+    if denom > 0:
+        normalized[finite_mask] = exp_values / denom
+
+    return {label: float(prob) for label, prob in zip(labels, normalized)}
+
+def get_option_preferences(model: LlamaFewShot,
+                           logprobs: np.array,
+                           options: list[str]) -> np.array:
+    """
+    Given the logprobs of the options, find the model preferences for each option.
+
+    The answer is read at the FIRST non-whitespace generated token -- the position where
+    the model commits to its answer. Leading whitespace/newline tokens (common with chat
+    templates, e.g. Qwen3 emits " 5" = [220, 16]) are skipped. We deliberately do NOT
+    scan downstream for a stray label token: if the first content token is not one of the
+    options -- the model spelled out "five", wrapped it in prose, leaked a <think> tag,
+    etc. -- it did not follow the prompt, and we return None for that example rather than
+    fabricating a score from a digit buried later in the output. None surfaces as a row
+    with no preferences/weighted score, so non-compliant generations stay visible.
+
+    Assumes greedy decoding (do_sample=False): the generated token at each position is the
+    argmax of that position's distribution.
+    """
+    # NOTE: single-token options only; multi-token labels would need per-token positions.
     option_token_dict = {
-        option: model.tokenizer.encode(option, add_special_tokens=False) 
+        option: model.tokenizer.encode(option, add_special_tokens=False)
         for option in options
     }
-    
+    label_token_ids = {ids[0] for ids in option_token_dict.values()}
+
     preferences = []
-    num_examples = logprobs.shape[0]
+    num_examples, num_positions = logprobs.shape[0], logprobs.shape[1]
 
     for index in range(num_examples):
-        option_logprobs  = {
-            option: logprobs[index, 0, option_token_dict[option]] 
+        # Walk to the first non-whitespace generated (argmax) token: the answer position.
+        answer_pos = None
+        for pos in range(num_positions):
+            gen_token = int(np.argmax(logprobs[index, pos]))
+            if model.tokenizer.decode([gen_token]).strip():
+                answer_pos = pos
+                break
+
+        # Non-compliant: only whitespace, or the committed token isn't one of the options.
+        if answer_pos is None or int(np.argmax(logprobs[index, answer_pos])) not in label_token_ids:
+            preferences.append(None)
+            continue
+
+        option_logprobs = {
+            option: float(logprobs[index, answer_pos, option_token_dict[option]].sum())
             for option in options
         }
-        # convert logprobs to probabilities 
-
-        # NOTE: consider joint probability for multi-token options
-        option_probs = {
-            option: float(np.exp(logprob.sum())) 
-            for option, logprob in option_logprobs.items()
-        }
+        # Normalize over options so preferences are directly interpretable.
+        option_probs = normalize_label_logprobs(option_logprobs)
 
         preferences.append(option_probs)
 
@@ -77,24 +159,24 @@ def get_option_preferences(model: LlamaFewShot,
     return preferences
 
 
-def get_logprobs(scores): 
+def get_logprobs(scores):
     """
     This function takes raw logit scores and returns logprobs for each output label
-    
+
     Note: Changes shape from (max_new_tokens, batch_size, vocab_size) -> (batch_size, max_new_tokens, vocab_size)
     """
 
-    # find out the batch size 
+    # find out the batch size
     batch_size = scores[0].shape[0]
-    logprobs = [] 
+    logprobs = []
     for index in range(batch_size):
         curr_logprobs = []
-        for token_output in scores: 
-            token_output_logprobs = get_logsoftmax(token_output[index]) 
+        for token_output in scores:
+            token_output_logprobs = get_logsoftmax(token_output[index])
             curr_logprobs.append(token_output_logprobs[0].detach().cpu().numpy())
-        
+
         logprobs.append(curr_logprobs)
-    
+
     return np.array(logprobs)
 
 
@@ -124,12 +206,12 @@ def parse_labels_config(labels_config: str | list[str] | dict) -> list[str]:
         elif re.search(r'^[+-]?\d+\s?-\s?[+-]?\d+$', labels_config):
             low_high = re.split(r'(?<=\d)\s?-\s?(?=[+-]?\d)', labels_config)
             assert len(low_high) == 2, "Labels should be a string in the format '(±)<low> - (±)<high>'"
-            try: 
+            try:
                 low_high = list(map(int, low_high))
             except:
                 raise ValueError("Labels should be a string in the format '(±)<low> - (±)<high>'")
             labels = list(map(str, list(range(low_high[0], low_high[1]+1))))
-        else: 
+        else:
             ValueError("if labels are specified as string, they should use comma separated list (for pairwise) or integer range in format '(±)<low> - (±)<high>' (for pointwise)")
     elif isinstance(labels_config, dict):
         assert "low" in labels_config and "high" in labels_config, "Labels should be a dict with keys 'low' and 'high'"
@@ -154,47 +236,64 @@ def parse_labels_config(labels_config: str | list[str] | dict) -> list[str]:
 
 def load_prompts_and_exemplars(config: dict) -> tuple[str, list[dict]]:
     """
-    Load the prompt and exemplars from the config file 
+    Load the prompt and exemplars from the config file
     If no exemplars are provided, return None
 
-    Accepts two ways of prompt input:
+    Accepts prompt input formats:
     1. A json file that contains the prompt with the keys "zero_shot" and "followup"
     2. A markdown directory that contains the prompt in the files "zero_shot.md" and "followup.md"
+    3. A strict markdown folder mode (input_type=md_folder) that always requires both files
     """
     prompt_details = config["prompt_details"]
     prompt_path = Path(prompt_details["path"])
 
-    if prompt_details['input_type'] == "json": 
+    if prompt_details['input_type'] == "json":
         prompts = load_json(prompt_path)
         prompt = prompts[config["prompt_details"]["prompt_name"]]
 
-    elif prompt_details['input_type'] in ("md", "md_folder"):
+    elif prompt_details['input_type'] == "md":
         # in this case, read the md files and return the content
         # filepath/zero_shot.md and filepath/followup.md
         zero_shot_filepath = prompt_path / "zero_shot.md"
         # first, verify that the files exist
         assert zero_shot_filepath.is_file(), f"Zero-shot prompt file not found at {zero_shot_filepath}"
         zero_shot = read_md(zero_shot_filepath)
-        
+
         if config["exemplars"]["use_exemplars"]:
             followup_filepath = prompt_path / "followup.md"
             assert followup_filepath.is_file(), f"Follow-up prompt file not found at {followup_filepath}"
             followup = read_md(followup_filepath)
-        else: 
+        else:
             followup = None
 
         prompt = {"zero_shot": zero_shot,
                  "followup": followup}
-        
+
+    elif prompt_details['input_type'] == "md_folder":
+        # strict markdown-folder mode: both files must exist
+        zero_shot_filepath = prompt_path / "zero_shot.md"
+        followup_filepath = prompt_path / "followup.md"
+
+        assert zero_shot_filepath.is_file(), f"Zero-shot prompt file not found at {zero_shot_filepath}"
+        assert followup_filepath.is_file(), f"Follow-up prompt file not found at {followup_filepath}"
+
+        prompt = {
+            "zero_shot": read_md(zero_shot_filepath),
+            "followup": read_md(followup_filepath)
+        }
+
+    else:
+        raise ValueError("prompt_details.input_type must be one of: json, md, md_folder")
+
     if config['exemplars']['use_exemplars']:
         exemplars_path = config["exemplars"]["path"]
-        exemplars = load_jsonlines(exemplars_path) if exemplars_path != 'None' else None
+        exemplars = load_records(exemplars_path, config["exemplars"].get("format")) if exemplars_path != 'None' else None
         if config["exemplars"]["shuffle"]:
             np.random.seed(config["exemplars"]["seed"])
             np.random.shuffle(exemplars)
         num_exemplars = config["exemplars"]["num_exemplars"]
         return prompt, exemplars[:num_exemplars]
-    
+
     return prompt, None
 
 
@@ -215,27 +314,35 @@ def prepare_output_file(config: dict) -> Path:
     return outfile
 
 
-def prepare_initial_data(config: dict, 
+def prepare_initial_data(config: dict,
                         outfile: Path,
-                        exemplars: list[dict], 
+                        exemplars: list[dict],
                         prompt: str) -> tuple[list[str], list[dict], str]:
     """
-    Prepare the initial data for the model by generating the 
-    prompts and filtering out the data that has already been processed    
+    Prepare the initial data for the model by generating the
+    prompts and filtering out the data that has already been processed
     """
 
-    dataset = load_jsonlines(config["dataset"]["path"])
+    dataset = load_records(config["dataset"]["path"], config["dataset"].get("format"))
     id_key = config["dataset"]["id_key"]
+    text_key = config["dataset"].get("text_key")
     input_vars = config["prompt_details"]["input_vars"]
     output_var = config["prompt_details"]["output_var"]
 
     assert id_key in dataset[0].keys(), f"ID key {id_key} not found in dataset"
-    assert set(input_vars).issubset(set(dataset[0].keys())), \
-        (f"Variables in the prompt: {input_vars} are not found in the dataset: {set(dataset[0].keys())}")
+    if text_key:
+        assert text_key in dataset[0].keys(), \
+            f"text_key {text_key!r} not found in dataset: {set(dataset[0].keys())}"
+
+    # Validate prompt variables against dataset keys, accounting for the text_key
+    # alias (text_key is exposed to prompts as {text}).
+    dataset_vars = set(resolve_text_key(dataset[0], text_key).keys())
+    assert set(input_vars).issubset(dataset_vars), \
+        (f"Variables in the prompt: {input_vars} are not found in the dataset: {dataset_vars}")
 
     if exemplars:
         all_vars = set(input_vars + [output_var])
-        exemplar_vars = set(exemplars[0].keys())
+        exemplar_vars = set(resolve_text_key(exemplars[0], text_key).keys())
         assert set(all_vars).issubset(exemplar_vars), \
             (f"Variables in the prompt: {all_vars} are not the same as the variables in the exemplar: {exemplar_vars}")
 
@@ -246,49 +353,9 @@ def prepare_initial_data(config: dict,
         print(f"Found {len(existing_data)} data items in the output file.")
         print(f"Running inference on {len(dataset)} items.")
 
-    query_texts = [prep_prompt(d, output_var, prompt=prompt, exemplars=exemplars) for d in dataset]
-    
+    query_texts = [prep_prompt(d, output_var, prompt=prompt, exemplars=exemplars, text_key=text_key) for d in dataset]
+
     return query_texts, dataset, id_key
-
-
-def get_logprobs(scores):
-    """
-    Convert raw generation scores to a (batch, steps, vocab) numpy array of log-probs.
-    scores: tuple of (batch_size, vocab_size) tensors, one per generated token.
-    """
-    batch_size = scores[0].shape[0]
-    logprobs = []
-    for index in range(batch_size):
-        curr_logprobs = []
-        for token_output in scores:
-            curr_logprobs.append(get_logsoftmax(token_output[index])[0].detach().cpu().numpy())
-        logprobs.append(curr_logprobs)
-    return np.array(logprobs)
-
-
-def get_option_preferences(model, logprobs: np.ndarray, options: list) -> list:
-    """
-    For each example in the batch, compute a probability for each label option.
-    Uses position-0 logits for all tokens in each (possibly multi-token) label,
-    sums log-probs, then exponentiates to get a probability.
-    Works for single-token labels (e.g. "1"–"5") and multi-token labels (e.g. "Text A").
-    """
-    option_token_dict = {
-        option: model.tokenizer.encode(option, add_special_tokens=False)
-        for option in options
-    }
-    preferences = []
-    for index in range(logprobs.shape[0]):
-        option_logprobs = {
-            option: logprobs[index, 0, option_token_dict[option]]
-            for option in options
-        }
-        option_probs = {
-            option: float(np.exp(lp.sum()))
-            for option, lp in option_logprobs.items()
-        }
-        preferences.append(option_probs)
-    return preferences
 
 
 def run_inference(model,
@@ -301,13 +368,16 @@ def run_inference(model,
                   dynamic_batching
             ):
     has_labels = hasattr(model, "label_id_map") and model.label_id_map
-    use_logprobs = has_labels and hasattr(model, "generate_answer_batch_logprobs")
     if not has_labels:
         print("Model does not have labels. Running inference without obtaining preferences")
 
     print("Starting inference loop")
     pbar = tqdm(total=len(query_texts), desc='Running Inference')
+
     print("Writing responses to: ", outfile)
+
+    n_scored = 0       # rows where the model committed to a label at the first content token
+    n_noncompliant = 0  # labeled rows where it did not (None preference)
 
     with open(outfile, "a+") as f:
         i = 0
@@ -315,20 +385,35 @@ def run_inference(model,
             try:
                 batch_query_texts = query_texts[i:i + batch_size]
                 ids = id_values[i:i + batch_size]
-                if use_logprobs:
-                    batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
-                    logprobs = get_logprobs(batched_output["scores"])
-                    preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys()))
-                    answers = batched_output["answers"]
+                batched_output = model.generate_answer_batch_logprobs(batch_query_texts)
+                if api_model:
+                    preferences = [
+                        normalize_label_logprobs(
+                            {lab: logprobs.get(lab, -np.inf) for lab in model.label_id_map.keys()}
+                        ) if has_labels else None
+                        for logprobs in batched_output["scores"]
+                    ]
                 else:
-                    answers = model.generate_answer_batch(batch_query_texts)
-                    preferences = [None] * len(ids)
-                for item_id, answer, preference in zip(ids, answers, preferences):
-                    output = {id_key: item_id, "response": answer}
+                    logprobs = get_logprobs(batched_output["scores"])
+                    preferences = get_option_preferences(model, logprobs, list(model.label_id_map.keys())) if has_labels else [None] * len(batch_query_texts)
+
+                #import ipdb; ipdb.set_trace()
+
+                for item_id, preference, answer in zip(ids, preferences, batched_output["answers"]):
+                    output = {
+                        id_key: item_id,
+                        "output": answer,
+                    }
                     if preference:
                         output["preferences"] = preference
+                        weighted_score = get_weighted_numeric_score(preference)
+                        if weighted_score is not None:
+                            output["weighted_likert_score"] = round(weighted_score, 4)
+                        n_scored += 1
+                    elif has_labels:
+                        n_noncompliant += 1
                     f.write(json.dumps(output) + "\n")
-                    
+
                 i += batch_size
                 pbar.update(batch_size)
 
@@ -337,7 +422,7 @@ def run_inference(model,
 
                 unused_gpu_mem = get_unused_gpu_memory()
 
-                # if dynamic batching is turned on, increase batch size by 2 
+                # if dynamic batching is turned on, increase batch size by 2
                 if unused_gpu_mem > 40 and dynamic_batching:
                     print("Unused GPU memory: ", unused_gpu_mem)
                     batch_size += 2
@@ -348,7 +433,7 @@ def run_inference(model,
                 print("Out of memory error. Reducing batch size")
                 print(e)
                 display_gpu_status()
-                if batch_size == 1: 
+                if batch_size == 1:
                     print("Batch size of 1 too large for GPU. Aborting")
 
                 batch_size = max(1, batch_size - 2)
@@ -364,10 +449,20 @@ def run_inference(model,
             if not api_model:
                 torch.cuda.empty_cache()
 
-    # report the length of the file 
+    # report the length of the file
     with open(outfile, "r") as f:
         lines = f.readlines()
         print(f"Total lines written to {outfile}: {len(lines)}")
+
+    if has_labels:
+        total = n_scored + n_noncompliant
+        if total:
+            rate = n_noncompliant / total
+            print(f"Non-compliant (no label at first content token): "
+                  f"{n_noncompliant}/{total} ({rate:.0%})")
+            if rate > 0.1:
+                print("WARNING: high non-compliance -- check reasoning-mode <think> leakage, "
+                      "prompt format, or run `hf_fewshot --config <cfg> --debug`")
 
     pbar.close()
 
@@ -407,7 +502,7 @@ def few_shot_classifier(config: dict):
             print("could not call display_gpu_status")
 
     model_class = model_map[model_family]
-    labels = config['prompt_details'].get('labels') or None
+    labels = config['prompt_details']['labels'] if 'labels' in config['prompt_details'] else None
     if labels:
         labels = parse_labels_config(labels)
 
@@ -425,17 +520,139 @@ def few_shot_classifier(config: dict):
     #reorder_output(outfile, config["dataset"]["path"], id_key)
 
 
+def run_debug_checks(config: dict, num_samples: int = 5) -> None:
+    """
+    Pre-flight sanity checks for a config + model, run via `hf_fewshot --config ... --debug`.
+
+    Validates the assumptions the scoring/preference pipeline relies on, so a new model
+    fails loudly here instead of silently producing garbage scores:
+      [1] each label is a single token for this tokenizer (scoring reads one position),
+      [2] leading whitespace (space / newline / merged ws tokens) is skipped to reach the
+          label, so " 5", "\\n5", " \\n5" all resolve to the label,
+      [3] on real generations the model commits to a label at the first content token --
+          this catches reasoning-mode <think> leakage and off-format answers (spelled-out
+          words, prose), which show up as a high non-compliance rate.
+    """
+    model_family = config["model_details"]["model_family"]
+    model_name = config["model_details"]["model_name"]
+    api_model = model_family == "gpt"
+
+    labels = config["prompt_details"].get("labels")
+    if labels:
+        labels = parse_labels_config(labels)
+    if not labels:
+        print("No labels configured in prompt_details; nothing to sanity-check.")
+        return
+
+    model = model_map[model_family](
+        model_name=model_name, model_details=config["model_details"], labels=labels
+    )
+
+    print("\n" + "=" * 72)
+    print("DEBUG SANITY CHECK")
+    print("=" * 72)
+    print(f"model  : {model_name} (family={model_family})")
+    print(f"labels : {labels}")
+
+    if api_model or not hasattr(model, "tokenizer"):
+        print("\nTokenization checks apply to local HF models only "
+              "(API models return string tokens directly). Skipping.")
+        return
+
+    tok = model.tokenizer
+    problems: list[str] = []
+
+    def is_whitespace(token_id: int) -> bool:
+        return tok.decode([token_id]).strip() == ""
+
+    # ---- [1] each label must be a single token ----
+    print("\n[1] Label tokenization (each label must encode to a single token)")
+    for label in labels:
+        ids = tok.encode(label, add_special_tokens=False)
+        ok = len(ids) == 1
+        if not ok:
+            problems.append(f"label {label!r} is multi-token {ids} -- scoring reads one position only")
+        print(f"    {label!r:>6} -> {ids}  {'OK' if ok else 'PROBLEM (multi-token)'}")
+
+    # ---- [2] leading-whitespace resilience ----
+    print("\n[2] Leading-whitespace resilience (parser skips ws, lands on the label)")
+    for label in labels:
+        base = tok.encode(label, add_special_tokens=False)
+        for prefix in (" ", "\n", " \n", "  "):
+            variant = prefix + label
+            ids = tok.encode(variant, add_special_tokens=False)
+            kept = list(ids)
+            while kept and is_whitespace(kept[0]):
+                kept.pop(0)
+            ok = kept[:1] == base[:1]
+            if not ok:
+                problems.append(f"variant {variant!r} -> {ids} does not resolve to label {label!r}")
+            print(f"    {variant!r:>8} -> {str(ids):<14} first-content={tok.decode(kept[:1])!r:>6}  "
+                  f"{'OK' if ok else 'PROBLEM'}")
+
+    # ---- [3] live generation on a few real examples ----
+    print(f"\n[3] Live generation on first {num_samples} dataset example(s)")
+    try:
+        prompt, exemplars = load_prompts_and_exemplars(config)
+        dataset = load_records(config["dataset"]["path"], config["dataset"].get("format"))[:num_samples]
+        output_var = config["prompt_details"]["output_var"]
+        text_key = config["dataset"].get("text_key")
+        query_texts = [prep_prompt(d, output_var, prompt=prompt, exemplars=exemplars, text_key=text_key) for d in dataset]
+
+        out = model.generate_answer_batch_logprobs(query_texts)
+        logprobs = get_logprobs(out["scores"])
+        prefs = get_option_preferences(model, logprobs, labels)
+
+        n_compliant = 0
+        for ans, pref in zip(out["answers"], prefs):
+            if pref is None:
+                verdict = "NON-COMPLIANT (no label at first content token)"
+            else:
+                top = max(pref, key=pref.get)
+                n_compliant += 1
+                verdict = f"label={top}  p={pref[top]:.3f}"
+            print(f"    output={ans!r:>14}  ->  {verdict}")
+
+        n = len(prefs)
+        rate = n_compliant / max(n, 1)
+        print(f"\n    compliant: {n_compliant}/{n} ({rate:.0%})")
+        if rate < 1.0:
+            problems.append(f"{n - n_compliant}/{n} sample(s) non-compliant -- check reasoning-mode "
+                            f"<think> leakage, prompt format, or max_new_tokens")
+    except Exception as e:
+        problems.append(f"live generation check failed to run: {e}")
+        print(f"    could not run generation check: {e}")
+
+    # ---- summary ----
+    print("\n" + "=" * 72)
+    if problems:
+        print(f"FOUND {len(problems)} POTENTIAL ISSUE(S):")
+        for p in problems:
+            print(f"  - {p}")
+    else:
+        print("All sanity checks passed.")
+    print("=" * 72)
+
+
 def get_args():
     parser = argparse.ArgumentParser(description="Run few-shot classification on a dataset")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file")
+    parser.add_argument("--debug", action="store_true",
+                        help="Run tokenization/parsing sanity checks for the config's model "
+                             "instead of full inference")
+    parser.add_argument("--debug-samples", type=int, default=5,
+                        help="Number of dataset examples to use for the --debug live-generation check")
     return parser
 
 def main():
     parser = get_args()
     args = parser.parse_args()
     config = load_yaml(args.config)
+    if args.debug:
+        run_debug_checks(config, num_samples=args.debug_samples)
+        return
     few_shot_classifier(config)
 
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     main()
